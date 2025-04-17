@@ -9,11 +9,10 @@ if project_root not in sys.path:
 print(f"Project root: {project_root}")
 print(f"Python path: {sys.path}")
 
-from supabase import create_client, Client
+from supabase.client import create_client, Client
 from config.settings import SUPABASE_URL, SUPABASE_KEY
 
-print(f"Imported SUPABASE_URL: {SUPABASE_URL}")
-print(f"Imported SUPABASE_KEY: {SUPABASE_KEY}")
+
 
 # Validate environment variables
 if not SUPABASE_URL or not SUPABASE_KEY:

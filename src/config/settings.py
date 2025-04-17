@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 
 # Get the absolute path to the project root
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 env_path = os.path.join(project_root, '.env.local')
 
 print(f"Loading .env.local from: {env_path}")
@@ -13,13 +13,13 @@ load_dotenv(dotenv_path=env_path)
 
 # DeepSeek API
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+if not DEEPSEEK_API_KEY:
+    raise ValueError("DEEPSEEK_API_KEY not found in environment")
 
 # Supabase Config
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-print(f"SUPABASE_URL: {SUPABASE_URL}")
-print(f"SUPABASE_KEY: {SUPABASE_KEY}")
 
 # Firebase Config
 FIREBASE_CONFIG = {
