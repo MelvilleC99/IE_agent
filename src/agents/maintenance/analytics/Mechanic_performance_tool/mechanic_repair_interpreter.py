@@ -6,15 +6,12 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-import json
-from shared_services.db_client import get_connection
-
 # --- Define your statistical thresholds ---
 Z_SCORE_THRESHOLD = 1.0  # Flag mechanics with Z-score > 1.0 (beyond 1 standard deviation)
 TREND_THRESHOLD_PCT = 5.0  # Flag mechanics with deterioration > 5% per period
 TREND_P_VALUE_THRESHOLD = 0.05  # Only consider statistically significant trends
 
-def interpret_and_save_findings(analysis_summary: dict) -> list[dict]:
+def interpret_analysis_results(analysis_summary: dict) -> list[dict]:
     """
     Interprets the focused analysis summary using statistical methods,
     identifies actionable findings based on the three main dimensions:
@@ -22,23 +19,15 @@ def interpret_and_save_findings(analysis_summary: dict) -> list[dict]:
     2. Repair time by machine type
     3. Repair time by machine + reason combination
     4. Trend analysis
+    
+    Returns a list of findings (not saved to database)
     """
     print("INTERPRETER: Interpreting analysis summary with statistical methods...")
-    problems_found = []
+    findings = []
     analysis_type_prefix = "mechanic_repair_time"
     
-    # Get mechanic employee numbers from Supabase
-    mechanic_dict = {}
-    try:
-        supabase = get_connection()
-        mechanics_result = supabase.table('mechanics').select('employee_number, full_name').execute()
-        if mechanics_result.data:
-            for mechanic in mechanics_result.data:
-                mechanic_dict[mechanic['full_name']] = mechanic['employee_number']
-        print(f"INTERPRETER: Loaded {len(mechanic_dict)} mechanic records")
-    except Exception as e:
-        print(f"INTERPRETER: Error loading mechanic data: {e}")
-        # Continue even if mechanic lookup fails
+    # Get mechanic info
+    mechanic_dict = get_mechanic_info()
     
     # --- Dimension 1: Overall Response Time Performance ---
     if 'overall_response' in analysis_summary and 'mechanic_stats' in analysis_summary['overall_response']:
@@ -75,12 +64,12 @@ def interpret_and_save_findings(analysis_summary: dict) -> list[dict]:
                     "percentage_above_mean": round(((response_time - mean_response_time) / mean_response_time) * 100, 1) if mean_response_time and mean_response_time > 0 else None
                 }
                 
-                problem = {
+                finding = {
                     "analysis_type": f"{analysis_type_prefix}_response_time",
                     "finding_summary": finding_summary,
                     "finding_details": finding_details
                 }
-                problems_found.append(problem)
+                findings.append(finding)
 
     # --- Dimension 2: Repair Time by Machine Type ---
     if 'machine_repair' in analysis_summary:
@@ -124,12 +113,12 @@ def interpret_and_save_findings(analysis_summary: dict) -> list[dict]:
                         "absolute_difference": round(repair_time - mean_repair_time, 1) if mean_repair_time else None
                     }
                     
-                    problem = {
+                    finding = {
                         "analysis_type": f"{analysis_type_prefix}_machine_repair",
                         "finding_summary": finding_summary,
                         "finding_details": finding_details
                     }
-                    problems_found.append(problem)
+                    findings.append(finding)
 
     # --- Dimension 3: Repair Time by Machine + Reason Combination ---
     if 'machine_reason_repair' in analysis_summary:
@@ -179,12 +168,12 @@ def interpret_and_save_findings(analysis_summary: dict) -> list[dict]:
                         "absolute_difference": round(repair_time - mean_repair_time, 1) if mean_repair_time else None
                     }
                     
-                    problem = {
+                    finding = {
                         "analysis_type": f"{analysis_type_prefix}_machine_reason_repair",
                         "finding_summary": finding_summary,
                         "finding_details": finding_details
                     }
-                    problems_found.append(problem)
+                    findings.append(finding)
 
     # --- Dimension 4: Trend Analysis for Repair and Response Times ---
     if 'trends' in analysis_summary:
@@ -220,12 +209,12 @@ def interpret_and_save_findings(analysis_summary: dict) -> list[dict]:
                         "confidence": "High" if p_value < 0.01 else "Medium" if p_value < 0.05 else "Low"
                     }
                     
-                    problem = {
+                    finding = {
                         "analysis_type": f"{analysis_type_prefix}_trend_repair",
                         "finding_summary": finding_summary,
                         "finding_details": finding_details
                     }
-                    problems_found.append(problem)
+                    findings.append(finding)
         
         # Check response time trends
         if 'response_time' in analysis_summary['trends']:
@@ -259,19 +248,19 @@ def interpret_and_save_findings(analysis_summary: dict) -> list[dict]:
                         "confidence": "High" if p_value < 0.01 else "Medium" if p_value < 0.05 else "Low"
                     }
                     
-                    problem = {
+                    finding = {
                         "analysis_type": f"{analysis_type_prefix}_trend_response",
                         "finding_summary": finding_summary,
                         "finding_details": finding_details
                     }
-                    problems_found.append(problem)
+                    findings.append(finding)
 
     # --- Deduplicate findings ---
     # Create a simple hash for each finding to identify duplicates
     finding_hashes = set()
     deduplicated_findings = []
     
-    for finding in problems_found:
+    for finding in findings:
         # Create a simple hash of key elements
         hash_elements = [
             finding['analysis_type'],
@@ -287,72 +276,40 @@ def interpret_and_save_findings(analysis_summary: dict) -> list[dict]:
             finding_hashes.add(finding_hash)
             deduplicated_findings.append(finding)
     
-    print(f"INTERPRETER: Identified {len(problems_found)} potential findings, deduplicated to {len(deduplicated_findings)}")
+    print(f"INTERPRETER: Identified {len(findings)} potential findings, deduplicated to {len(deduplicated_findings)}")
+    return deduplicated_findings
 
-    # --- Save findings to Supabase ---
-    saved_findings = []
-    if deduplicated_findings:
-        try:
-            # First check for existing findings to prevent duplicates
-            existing_findings = {}
-            try:
-                findings_result = supabase.table('findings_log').select('finding_id, analysis_type, finding_details->mechanic_id, finding_details->metric').execute()
-                for finding in findings_result.data:
-                    existing_key = f"{finding['analysis_type']}_{finding['mechanic_id']}_{finding['metric']}"
-                    existing_findings[existing_key] = finding['finding_id']
-            except Exception as e:
-                print(f"INTERPRETER: Warning - could not check for existing findings: {e}")
-            
-            for finding in deduplicated_findings:
-                mechanic_id = finding['finding_details'].get('mechanic_id', '')
-                metric = finding['finding_details'].get('metric', '')
-                existing_key = f"{finding['analysis_type']}_{mechanic_id}_{metric}"
-                
-                if existing_key in existing_findings:
-                    # Update existing finding
-                    finding_id = existing_findings[existing_key]
-                    update_result = supabase.table('findings_log').update({
-                        'finding_summary': finding['finding_summary'],
-                        'finding_details': finding['finding_details'],
-                        'updated_at': 'NOW()'
-                    }).eq('finding_id', finding_id).execute()
-                    
-                    if update_result.data:
-                        print(f"INTERPRETER: Updated finding ID {finding_id}: {finding['finding_summary']}")
-                        finding['finding_id'] = finding_id
-                        saved_findings.append(finding)
-                else:
-                    # Insert new finding
-                    result = supabase.table('findings_log').insert({
-                        'analysis_type': finding['analysis_type'],
-                        'finding_summary': finding['finding_summary'],
-                        'finding_details': finding['finding_details'],
-                        'status': 'New'
-                    }).execute()
-                    
-                    if result.data:
-                        saved_id = result.data[0]['finding_id']
-                        print(f"INTERPRETER: Saved new finding ID {saved_id}: {finding['finding_summary']}")
-                        finding['finding_id'] = saved_id
-                        saved_findings.append(finding)
-        except Exception as e:
-            print(f"INTERPRETER: ERROR saving findings to Supabase: {e}")
-            # Return what was successfully processed before error
+def get_mechanic_info():
+    """Get mechanic employee numbers from database"""
+    try:
+        from shared_services.db_client import get_connection
+        supabase = get_connection()
+        mechanics_result = supabase.table('mechanics').select('employee_number, full_name').execute()
+        
+        mechanic_dict = {}
+        if mechanics_result.data:
+            for mechanic in mechanics_result.data:
+                mechanic_dict[mechanic['full_name']] = mechanic['employee_number']
+        print(f"INTERPRETER: Loaded {len(mechanic_dict)} mechanic records")
+        return mechanic_dict
+    except Exception as e:
+        print(f"INTERPRETER: Error loading mechanic data: {e}")
+        return {}  # Return empty dict on error
 
-    return saved_findings
-
-# Example usage (for testing this script directly)
+# Test function for direct execution
 if __name__ == '__main__':
+    import json
+    
     # Load sample summary data for testing
     try:
         with open("test_summary_output.json", "r") as f:
             test_summary = json.load(f)
-        findings = interpret_and_save_findings(test_summary)
+        findings = interpret_analysis_results(test_summary)
         print(f"\n--- Interpreter Test Results ---")
-        print(f"Found and attempted to save {len(findings)} findings:")
+        print(f"Found {len(findings)} potential findings:")
         for i, f in enumerate(findings):
             if i < 10:  # Only show first 10 findings to avoid overwhelming output
-                print(f"- {f.get('finding_id', 'ERR')}: {f['finding_summary']}")
+                print(f"- {f['finding_summary']}")
             elif i == 10:
                 print(f"... and {len(findings) - 10} more findings.")
     except FileNotFoundError:

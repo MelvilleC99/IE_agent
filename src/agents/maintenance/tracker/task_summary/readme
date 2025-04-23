@@ -1,0 +1,161 @@
+# Performance Monitoring System
+
+This system monitors mechanic performance, collects measurements, analyzes trends, and makes data-driven decisions for performance improvement.
+
+## System Components
+
+The system is divided into several modular components that work together:
+
+### 1. Data Collection
+
+- **summary_data.py** - Collects measurement data and task details from the database
+  - Gets measurements for specific tasks
+  - Finds tasks ready for daily/weekly measurement
+  - Finds tasks that have reached their end date and need evaluation
+
+### 2. Analysis
+
+- **summary_analyzer.py** - Performs statistical analysis of performance data
+  - Calculates percentage changes between measurements
+  - Analyzes trends using linear regression
+  - Performs significance testing
+  - Computes moving averages
+
+### 3. Database Storage
+
+- **summary_writer.py** - Saves analysis results to the database
+  - Writes summary data to the task_summaries table
+  - Handles special cases like insufficient data
+  - Provides methods to retrieve existing summaries
+
+### 4. Evaluation
+
+- **task_evaluator.py** - Makes decisions based on performance summaries
+  - Applies rule-based logic to determine next steps
+  - Produces recommendations (close, extend, review, intervene)
+  - Saves evaluations to the task_evaluations table
+
+### 5. Task Management
+
+- **task_updater.py** - Updates tasks based on evaluation decisions
+  - Extends tasks that need more monitoring
+  - Closes tasks that have met improvement goals
+  - Updates task status for those needing review or intervention
+  - Records extensions in the task_extensions table
+
+### 6. Communication
+
+- **notification_handler.py** - Sends notifications about evaluation results
+  - Creates appropriate messages based on decision type
+  - Determines recipients for each notification
+  - Logs notifications in the notification_logs table
+
+### 7. Orchestration
+
+- **task_summary.py** - Coordinates the analysis process
+  - Uses data collection, analysis, and storage components
+  - Provides a unified interface for summarization
+
+- **performance_workflow.py** - Main workflow orchestrator
+  - Coordinates all steps from measurement to notification
+  - Handles daily and weekly measurements
+  - Processes end-of-period evaluations
+  - Manages error recovery and logging
+
+## Database Schema
+
+The system uses these database tables:
+
+1. **tasks** - The main tasks table (existing)
+   - Added fields: extension_count, evaluated_at, evaluation_notes, recommendation
+
+2. **measurements** - Stores individual measurements (existing)
+
+3. **task_summaries** - Stores analysis results
+   - Comprehensive metrics and statistical results
+   - Links to original task via task_id
+   - Tracks extension history with extension_number
+
+4. **task_evaluations** - Stores evaluation decisions
+   - Decision type (close, extend, review, intervene)
+   - Confidence level and explanation
+   - Specific recommendations
+
+5. **task_extensions** - Records when tasks are extended
+   - Original and new end dates
+   - Reason for extension
+   - Extension sequence number
+
+6. **notification_logs** - Tracks communication
+   - Recipients and message content
+   - Status (sent, failed)
+   - Timestamp information
+
+## Workflow Process
+
+The complete workflow proceeds as follows:
+
+1. **Daily Monitoring**
+   - Identify tasks needing daily measurements
+   - Take measurements and save to database
+
+2. **Weekly Monitoring**
+   - Identify tasks needing weekly measurements
+   - Take measurements and save to database
+
+3. **End-of-Period Processing**
+   - Identify tasks that have reached their end date
+   - Generate performance summaries with statistical analysis
+   - Evaluate summaries and make decisions
+   - Update task status based on decisions
+   - Send notifications to relevant stakeholders
+
+## Running the System
+
+The workflow can be run in several modes:
+
+```bash
+# Run the complete workflow
+python performance_workflow.py --all
+
+# Run only daily measurements
+python performance_workflow.py --daily
+
+# Run only weekly measurements
+python performance_workflow.py --weekly
+
+# Run only end-of-period evaluations
+python performance_workflow.py --evaluation
+```
+
+Individual components can also be run independently for testing or specific processing needs.
+
+## Extension Process
+
+When a task is extended:
+
+1. The task's `monitor_end_date` is updated with a new date
+2. The `extension_count` is incremented
+3. A record is added to `task_extensions` to track the change
+4. The existing summary is marked as `is_final = false`
+5. Monitoring continues until the new end date
+
+## Notification Templates
+
+Different message templates are used based on the evaluation decision:
+
+- **Close** - Performance goal achieved, task completed
+- **Extend** - Some improvement, continuing monitoring
+- **Review** - Unclear results, manager review needed
+- **Intervene** - Performance deteriorating, action required
+
+## Error Handling
+
+The system includes robust error handling:
+
+- Database connection issues
+- Missing or insufficient data
+- Statistical calculation errors
+- Communication failures
+
+All errors are logged and the workflow attempts to continue with remaining tasks.

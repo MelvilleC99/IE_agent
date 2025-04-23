@@ -14,7 +14,17 @@ from firebase_admin import credentials, firestore
 
 # Only initialize once
 if not firebase_admin._apps:
-    cred = credentials.Certificate("firebase-service-account.json")
+    # Define the exact path to your credentials
+    cred_path = os.path.join(os.path.dirname(project_root), "secrets/firebase-service-account.json")
+    
+    # Check if the file exists
+    if not os.path.exists(cred_path):
+        raise ValueError(f"Firebase credentials not found at: {cred_path}")
+    
+    # Initialize with credentials
+    cred = credentials.Certificate(cred_path)
     firebase_admin.initialize_app(cred)
+    print(f"Firebase initialized with credentials from: {cred_path}")
 
+# Get Firestore client
 db = firestore.client()

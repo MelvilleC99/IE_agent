@@ -47,3 +47,6 @@ Thumbs.db
 # Project specific
 test_summary_output.json
 *.json 
+
+# don’t commit secrets
+/secrets/
