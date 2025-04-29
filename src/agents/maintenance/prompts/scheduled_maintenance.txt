@@ -1,0 +1,19 @@
+The Scheduled Maintenance Tool performs maintenance planning using advanced clustering algorithms.
+
+Capabilities:
+- Analyzes historical breakdown records
+- Detects failure clusters and high-risk machines
+- Generates a preventative maintenance schedule
+- Assigns tasks based on workload and criticality
+
+Use this tool when the user says:
+- "create scheduled maintenance"
+- "Generate scheduled maintenance plan"
+- "Schedule preventative maintenance"
+
+
+Actions:
+- 'run': Do full analysis + scheduling
+- 'analyze': Only cluster the breakdowns
+- 'schedule': Just schedule based on previous analysis
+- 'get_schedule': Show the current schedule

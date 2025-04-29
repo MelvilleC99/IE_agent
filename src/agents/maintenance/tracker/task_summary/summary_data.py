@@ -124,6 +124,34 @@ class SummaryDataCollector:
             print(f"DATA: Error retrieving tasks for evaluation: {e}")
             return []
     
+    def get_tasks_marked_for_evaluation(self):
+        """
+        Get tasks that have been marked as needing evaluation by the SummaryStarter
+        
+        Returns:
+            list: List of tasks marked for evaluation
+        """
+        if not self.supabase:
+            print("DATA: No database connection available")
+            return []
+            
+        try:
+            # Get tasks where needs_evaluation is True
+            result = (self.supabase.table('tasks')
+                       .select('*')
+                       .eq('needs_evaluation', True)
+                       .execute())
+            
+            if result.data:
+                print(f"DATA: Found {len(result.data)} tasks marked for evaluation")
+                return result.data
+                
+            print("DATA: No tasks found marked for evaluation")
+            return []
+        except Exception as e:
+            print(f"DATA: Error retrieving tasks marked for evaluation: {e}")
+            return []
+    
     def collect_data_for_task(self, task_id):
         """
         Collect all data needed for task evaluation
@@ -158,6 +186,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Collect data for task evaluation')
     parser.add_argument('--task-id', help='ID of task to collect data for')
     parser.add_argument('--find-ready', action='store_true', help='Find tasks ready for evaluation')
+    parser.add_argument('--find-marked', action='store_true', help='Find tasks marked for evaluation')
     args = parser.parse_args()
     
     collector = SummaryDataCollector()
@@ -176,5 +205,11 @@ if __name__ == '__main__':
     if args.find_ready:
         tasks = collector.get_tasks_for_evaluation()
         print(f"\nTasks ready for evaluation: {len(tasks)}")
+        for i, task in enumerate(tasks):
+            print(f"{i+1}. Task ID {task['id']}: {task['title']}")
+    
+    if args.find_marked:
+        tasks = collector.get_tasks_marked_for_evaluation()
+        print(f"\nTasks marked for evaluation: {len(tasks)}")
         for i, task in enumerate(tasks):
             print(f"{i+1}. Task ID {task['id']}: {task['title']}")

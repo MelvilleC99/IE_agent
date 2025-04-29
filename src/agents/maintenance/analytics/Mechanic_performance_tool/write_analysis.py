@@ -67,7 +67,7 @@ class AnalysisWriter:
             
         print(f"WRITER: Writing analysis results for period {period_start_date} to {period_end_date}")
         
-        # Records to be inserted
+        # Records to be inserted or upserted
         records = []
         
         try:
@@ -241,12 +241,17 @@ class AnalysisWriter:
                         }
                         records.append(record)
             
-            # Insert all records into the database
-            print(f"WRITER: Inserting {len(records)} records into mechanic_performance")
+            # Upsert all records into the database
+            print(f"WRITER: Upserting {len(records)} records into mechanic_performance")
             
             successful_records = []
             for record in records:
-                result = self.supabase.table('mechanic_performance').insert(record).execute()
+                result = self.supabase.table('mechanic_performance')\
+                    .upsert(
+                        record,
+                        on_conflict='context,dimension_1,dimension_2,mechanic_name,period_start_date,period_end_date'
+                    )\
+                    .execute()
                 if result.data:
                     successful_records.append(result.data[0])
             

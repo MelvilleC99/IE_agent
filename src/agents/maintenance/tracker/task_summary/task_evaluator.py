@@ -16,7 +16,7 @@ if src_dir not in sys.path:
 load_dotenv(Path(__file__).resolve().parents[3] / ".env.local")
 
 from shared_services.db_client import get_connection
-from summary_writer import SummaryWriter
+from src.agents.maintenance.tracker.task_summary.summary_writer import SummaryWriter
 
 class TaskEvaluator:
     """

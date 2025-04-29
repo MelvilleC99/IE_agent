@@ -17,9 +17,9 @@ if src_dir not in sys.path:
 load_dotenv(Path(__file__).resolve().parents[3] / ".env.local")
 
 # Import the modular components
-from summary_data import SummaryDataCollector
-from summary_analyzer import SummaryAnalyzer
-from summary_writer import SummaryWriter
+from src.agents.maintenance.tracker.task_summary.summary_data import SummaryDataCollector
+from src.agents.maintenance.tracker.task_summary.summary_analyzer import SummaryAnalyzer
+from src.agents.maintenance.tracker.task_summary.summary_writer import SummaryWriter
 
 class TaskSummary:
     """

@@ -39,3 +39,15 @@ Example prompts:
 - "Show me a sample of the raw maintenance records."
 - "What is the average response time per mechanic?"
 - "Which mechanic has the highest total repair time?"
+
+[Scheduled Maintenance Context]
+You can also run a weekly scheduled maintenance workflow for machines. This workflow:
+- Analyzes machine failure data using clustering techniques
+- Identifies problematic machines that need maintenance
+- Creates maintenance tasks in the system
+- Assigns mechanics based on workload balance
+
+Example prompts:
+- "Run the weekly scheduled maintenance workflow for our factory machines"
+- "Generate the maintenance schedule for this week"
+- "Which machines need preventative maintenance based on cluster analysis?"
