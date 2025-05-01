@@ -1,4 +1,5 @@
-# src/agents/maintenance/tracker/schedule_maintenance.py
+# /Users/melville/Documents/Industrial_Engineering_Agent/src/agents/maintenance/tracker/scheduled_maintenance/schedule_maintenance.py
+
 import uuid
 from datetime import datetime, timedelta
 import os
@@ -17,7 +18,7 @@ logger = logging.getLogger("maintenance_scheduler")
 
 # Add the src directory to Python's path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-src_dir = os.path.abspath(os.path.join(current_dir, '../../../'))
+src_dir = os.path.abspath(os.path.join(current_dir, '../../../../'))
 project_root = os.path.abspath(os.path.join(src_dir, '../'))
 sys.path.insert(0, src_dir)
 

@@ -32,6 +32,7 @@ sys.path.insert(0, src_dir)
 # Import the required modules
 from agents.maintenance.analytics.MachineCluster import run_analysis
 from agents.maintenance.tracker.scheduled_maintenance.schedule_maintenance import MaintenanceScheduler
+from agents.maintenance.tracker.scheduled_maintenance.scheduled_maintenance_notification import send_maintenance_schedule_notification
 
 
 class ScheduledMaintenanceWorkflow:
@@ -156,6 +157,15 @@ class ScheduledMaintenanceWorkflow:
             
             logger.info(f"Created {scheduling_results['tasks_created']} tasks, " 
                         f"skipped {len(scheduling_results['skipped'])} machines")
+            
+            # Send notification about scheduled maintenance tasks
+            if scheduling_results.get('tasks_created', 0) > 0:
+                logger.info("Sending maintenance schedule notification")
+                notification_result = send_maintenance_schedule_notification(scheduling_results)
+                scheduling_results['notification'] = notification_result
+            else:
+                logger.info("No tasks created, skipping notification")
+                
             return scheduling_results
             
         except Exception as e:
@@ -212,7 +222,8 @@ class ScheduledMaintenanceWorkflow:
             "status": "success",
             "analysis_results": analysis_results,
             "scheduling_results": scheduling_results,
-            "current_schedule": current_schedule
+            "current_schedule": current_schedule,
+            "notification": scheduling_results.get('notification', {})  # Include notification info
         }
 
 
@@ -242,6 +253,12 @@ if __name__ == "__main__":
                 print(f"- Identified {results['scheduling_results']['total_problematic_machines']} problematic machines")
                 print(f"- Created {results['scheduling_results']['tasks_created']} maintenance tasks")
                 print(f"- Current schedule has {len(results['current_schedule'])} open tasks")
+                
+                # Print notification status if available
+                if 'notification' in results:
+                    notification = results['notification']
+                    notification_status = notification.get('status', 'unknown')
+                    print(f"- Notification status: {notification_status}")
                 
                 # Print detailed task information
                 if results['scheduling_results']['created']:

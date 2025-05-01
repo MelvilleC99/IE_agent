@@ -13,7 +13,7 @@ if project_root not in sys.path:
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("agent_test")
+logger = logging.getLogger("maintenance_agent")
 
 # Load environment variables
 project_root = os.path.dirname(
@@ -44,9 +44,43 @@ if api_key:
 else:
     logger.warning("API key not found in environment variables")
 
-# Import LangChain components - Use the community version that works
+# Import LangChain components
 from langchain.agents import initialize_agent, AgentType, Tool
 from langchain_community.chat_models.openai import ChatOpenAI
+
+# Add call_llm function
+def call_llm(prompt: str) -> str:
+    """
+    Call the language model with a prompt.
+    
+    Args:
+        prompt: The prompt to send to the language model
+        
+    Returns:
+        The model's response as a string
+    """
+    api_key = os.getenv('DEEPSEEK_API_KEY')
+    if not api_key:
+        raise ValueError("DEEPSEEK_API_KEY not found in environment variables")
+        
+    llm = ChatOpenAI(
+        model="deepseek-chat",
+        temperature=0.7,
+        api_key=api_key,
+        base_url="https://api.deepseek.com/v1"
+    )
+    
+    try:
+        response = llm.invoke(prompt)
+        if isinstance(response.content, str):
+            return response.content
+        elif isinstance(response.content, list):
+            return "\n".join(str(item) for item in response.content)
+        else:
+            return str(response.content)
+    except Exception as e:
+        logger.error(f"Error calling LLM: {e}")
+        return f"Error calling language model: {str(e)}"
 
 # Data file paths - Use environment variable for RAW_DATA_PATH
 RAW_DATA_PATH = os.getenv('RAW_DATA_PATH')
@@ -68,6 +102,9 @@ logger.info(f"Using ANALYSIS_SUMMARY_PATH: {ANALYSIS_SUMMARY_PATH}")
 
 # Workflow wrapper will be imported as a tool
 from src.agents.maintenance.tools.scheduled_maintenance_tool import scheduled_maintenance_tool
+
+# Import Supabase tools
+from src.agents.maintenance.tools.supabase_tool import query_database, get_schema_info, insert_or_update_data
 
 # Existing tool functions
 def get_raw_maintenance_data(query: Optional[str] = None) -> str:
@@ -198,6 +235,7 @@ def run_interactive_agent():
     )
 
     tools = [
+        # Existing tools
         Tool(
             name="RawMaintenanceData",
             func=get_raw_maintenance_data,
@@ -231,7 +269,24 @@ def run_interactive_agent():
         Tool(
             name="RunScheduledMaintenance",
             func=run_scheduled_maintenance,
-            description="Run the factory's scheduled maintenance workflow. Use this tool when asked to run scheduled maintenance, generate a maintenance schedule, or schedule maintenance tasks."
+            description="Run the factory's scheduled maintenance workflow. Use this tool when asked to run scheduled maintenance."
+        ),
+        
+        # New Supabase tools
+        Tool(
+            name="QueryDatabase",
+            func=query_database,
+            description="Query database tables. Format: 'table_name:column1,column2;filter1=value1,filter2=value2;limit=100'"
+        ),
+        Tool(
+            name="GetSchemaInfo",
+            func=get_schema_info,
+            description="Get database schema information. Input a table name or search query to find relevant tables."
+        ),
+        Tool(
+            name="InsertOrUpdateData",
+            func=insert_or_update_data,
+            description="Insert or update data. Format: 'operation|table_name|json_data|match_column'"
         )
     ]
 
@@ -275,6 +330,7 @@ def create_agent():
     )
 
     tools_list = [
+        # Existing tools
         Tool(
             name="RawMaintenanceData",
             func=get_raw_maintenance_data,
@@ -308,7 +364,24 @@ def create_agent():
         Tool(
             name="RunScheduledMaintenance",
             func=run_scheduled_maintenance,
-            description="Run the factory's scheduled maintenance workflow. Use this tool when asked to run scheduled maintenance, generate a maintenance schedule, or schedule maintenance tasks."
+            description="Run the factory's scheduled maintenance workflow. Use this tool when asked to run scheduled maintenance."
+        ),
+        
+        # New Supabase tools
+        Tool(
+            name="QueryDatabase",
+            func=query_database,
+            description="Query database tables. Format: 'table_name:column1,column2;filter1=value1,filter2=value2;limit=100'"
+        ),
+        Tool(
+            name="GetSchemaInfo",
+            func=get_schema_info,
+            description="Get database schema information. Input a table name or search query to find relevant tables."
+        ),
+        Tool(
+            name="InsertOrUpdateData",
+            func=insert_or_update_data,
+            description="Insert or update data. Format: 'operation|table_name|json_data|match_column'"
         )
     ]
 
