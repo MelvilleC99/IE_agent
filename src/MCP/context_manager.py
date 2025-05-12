@@ -1,206 +1,180 @@
-# /Users/melville/Documents/Industrial_Engineering_Agent/src/MCP/context_manager.py
-
+# /src/MCP/context_manager.py
 import logging
-import time
-from typing import Dict, Any, List, Set, Optional, Tuple
-import re
+from typing import Dict, Any, List, Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("mcp_context_manager")
+logger = logging.getLogger("context_manager")
 
-class MCPContextManager:
+class ContextManager:
     """
-    Manages context for Model Context Protocol (MCP) interactions.
+    Simplified context manager for the two-tier architecture.
     
-    The context manager tracks conversation history, entities mentioned,
-    and relevant information to provide appropriate context to the LLM.
+    This class maintains conversation history and recent context
+    in a format that can be used by both OpenAI and DeepSeek.
     """
     
-    def __init__(self, max_history_items: int = 10, max_context_tokens: int = 2000):
+    def __init__(self, session_manager=None, max_history: int = 6):
         """
         Initialize the context manager.
         
         Args:
-            max_history_items: Maximum number of previous messages to include
-            max_context_tokens: Approximate maximum tokens for context
+            session_manager: Optional session manager for persistence
+            max_history: Maximum number of messages to keep in history (default: 6 for 3 exchanges)
         """
+        self.session_manager = session_manager
+        self.max_history = max_history  # Reduced from 10 to 6 for token savings
         self.conversation_history = []
-        self.known_entities = {
-            "mechanics": set(),
-            "machines": set(),
-            "machine_types": set(),
-            "issues": set()
-        }
-        self.max_history_items = max_history_items
-        self.max_context_tokens = max_context_tokens
-        self.recent_tools_used = []
-        logger.info(f"Initialized MCP Context Manager (max_history={max_history_items}, max_tokens={max_context_tokens})")
+        
+        # Load history from session manager if available
+        if session_manager:
+            self._load_from_session()
+            
+        logger.info(f"ContextManager initialized (max_history={max_history})")
     
-    def add_message(self, role: str, content: str, tools_used: Optional[List[str]] = None) -> None:
+    def _load_from_session(self):
+        """Load conversation history from session manager."""
+        if self.session_manager:
+            full_history = self.session_manager.get_conversation_history() or []
+            # Only load the most recent messages
+            self.conversation_history = full_history[-self.max_history:] if full_history else []
+            logger.info(f"Loaded {len(self.conversation_history)} messages from session")
+    
+    def add_message(self, role: str, content: str, function_name: Optional[str] = None):
         """
         Add a message to the conversation history.
         
         Args:
-            role: The role of the message sender ('user' or 'assistant')
-            content: The message content
-            tools_used: Any tools used in this message
+            role: Message role ('user', 'assistant', or 'function')
+            content: Message content
+            function_name: Optional function name for function messages
         """
-        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        # Truncate content if it's too long (for token savings)
+        max_content_length = 2000  # Limit message size
+        if len(content) > max_content_length:
+            content = content[:max_content_length] + "... [truncated]"
+            logger.info(f"Truncated {role} message to {max_content_length} characters")
         
-        message = {
-            "role": role,
-            "content": content,
-            "timestamp": timestamp,
-            "tools_used": tools_used or []
-        }
+        if role == 'function' and function_name:
+            message = {
+                "role": role,
+                "name": function_name,
+                "content": content
+            }
+        else:
+            message = {
+                "role": role,
+                "content": content
+            }
         
         self.conversation_history.append(message)
         
-        # Add tools to recent tools
-        if tools_used:
-            self.recent_tools_used.extend(tools_used)
-            self.recent_tools_used = self.recent_tools_used[-5:]  # Keep only the 5 most recent
-        
-        # Extract entities from the message
-        self._extract_entities(content)
-        
         # Trim history if needed
-        if len(self.conversation_history) > self.max_history_items:
-            self.conversation_history = self.conversation_history[-self.max_history_items:]
+        if len(self.conversation_history) > self.max_history:
+            # Remove oldest messages but try to keep user-assistant pairs
+            excess = len(self.conversation_history) - self.max_history
+            # Remove in pairs when possible to maintain context
+            if excess >= 2:
+                self.conversation_history = self.conversation_history[excess:]
+            else:
+                self.conversation_history = self.conversation_history[1:]
             
-        logger.debug(f"Added message from {role}. History size: {len(self.conversation_history)}")
+            logger.debug(f"Trimmed history to {len(self.conversation_history)} messages")
+        
+        # Save to session manager if available
+        if self.session_manager:
+            self.session_manager.save_conversation_history(self.conversation_history)
+            
+        logger.debug(f"Added {role} message to history. Total: {len(self.conversation_history)}")
     
-    def _extract_entities(self, text: str) -> None:
+    def get_recent_history(self, count: Optional[int] = None) -> List[Dict[str, Any]]:
         """
-        Extract relevant entities from text.
+        Get recent conversation history.
         
         Args:
-            text: The text to extract entities from
+            count: Number of recent messages to return (default: all)
+            
+        Returns:
+            List of recent messages
         """
-        # Extract mechanics (names that look like people)
-        potential_names = re.findall(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', text)
-        for name in potential_names:
-            self.known_entities["mechanics"].add(name)
+        if count is None:
+            return self.conversation_history.copy()
         
-        # Extract machine numbers
-        machine_numbers = re.findall(r'\b[A-Z]+-\d+\b|\bMachine-\d+\b', text)
-        for machine in machine_numbers:
-            self.known_entities["machines"].add(machine)
-        
-        # Extract machine types
-        machine_types = [
-            "Cutter", "Loom", "Printer", "Weaver", "Dryer", 
-            "Mixer", "Conveyor", "Packager", "Labeler", "Scanner"
-        ]
-        for m_type in machine_types:
-            if m_type.lower() in text.lower():
-                self.known_entities["machine_types"].add(m_type)
-        
-        # Extract common issue types
-        issue_types = [
-            "breakdown", "malfunction", "error", "jam", "failure",
-            "overheating", "leak", "calibration", "alignment", "wear"
-        ]
-        for issue in issue_types:
-            if issue.lower() in text.lower():
-                self.known_entities["issues"].add(issue)
+        # Ensure we get complete exchanges (user-assistant pairs)
+        if count % 2 != 0:
+            count += 1  # Make it even to get complete exchanges
+            
+        return self.conversation_history[-count:].copy()
     
-    def get_context(self) -> Dict[str, Any]:
+    def get_context_for_deepseek(self) -> str:
         """
-        Get the current context for an MCP message.
+        Get formatted context for DeepSeek agent.
         
         Returns:
-            A context dictionary
+            Context string (limited for token efficiency)
         """
-        # Convert sets to lists for JSON serialization
-        entities_dict = {
-            k: list(v) for k, v in self.known_entities.items() if v
-        }
+        context_parts = []
         
-        # Get summarized conversation history (limiting tokens)
-        summarized_history = self._summarize_history()
+        # Only use the most recent messages for context
+        recent_messages = self.get_recent_history(4)  # Last 2 exchanges
         
-        context = {
-            "user_info": {
-                "role": "maintenance_manager"
-            },
-            "conversation_history": summarized_history,
-            "known_entities": entities_dict,
-            "recent_tools": self.recent_tools_used
-        }
+        for msg in recent_messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            
+            # Further truncate content for DeepSeek context
+            if len(content) > 500:
+                content = content[:500] + "..."
+            
+            if role == "user":
+                context_parts.append(f"USER: {content}")
+            elif role == "assistant":
+                context_parts.append(f"ASSISTANT: {content}")
+            elif role == "function":
+                function_name = msg.get("name", "unknown")
+                # Summarize function results instead of full content
+                result_preview = content[:200] + "..." if len(content) > 200 else content
+                context_parts.append(f"FUNCTION '{function_name}': {result_preview}")
         
-        return context
+        return "\n".join(context_parts)
     
-    def _summarize_history(self) -> List[Dict[str, str]]:
-        """
-        Summarize conversation history to fit within token limits.
-        
-        Returns:
-            Summarized conversation history
-        """
-        # This is a simplified version - a proper implementation would 
-        # estimate tokens and truncate/summarize as needed
-        
-        # For now, just return the recent history
-        return self.conversation_history[-min(5, len(self.conversation_history)):]
-    
-    def add_entity(self, entity_type: str, entity_value: str) -> None:
-        """
-        Explicitly add an entity to the known entities.
-        
-        Args:
-            entity_type: Type of entity ('mechanics', 'machines', etc.)
-            entity_value: The entity value to add
-        """
-        if entity_type in self.known_entities:
-            self.known_entities[entity_type].add(entity_value)
-            logger.debug(f"Added entity: {entity_type}:{entity_value}")
-        else:
-            logger.warning(f"Unknown entity type: {entity_type}")
-    
-    def reset(self) -> None:
-        """Reset the context manager to its initial state."""
+    def clear_history(self):
+        """Clear the conversation history."""
         self.conversation_history = []
-        self.known_entities = {
-            "mechanics": set(),
-            "machines": set(),
-            "machine_types": set(),
-            "issues": set()
-        }
-        self.recent_tools_used = []
-        logger.info("Context manager reset")
+        
+        # Clear session if available
+        if self.session_manager:
+            self.session_manager.clear_conversation_history()
+            
+        logger.info("Conversation history cleared")
     
-    def get_relevant_entities(self, query: str) -> Dict[str, List[str]]:
+    def get_summary_for_handoff(self) -> str:
         """
-        Get entities that are relevant to the current query.
+        Get a summary of the conversation for handoff between agents.
         
-        Args:
-            query: The user's query
-            
         Returns:
-            Dictionary of relevant entities
+            Summary string optimized for token usage
         """
-        # Convert query to lowercase for matching
-        query_lower = query.lower()
+        if not self.conversation_history:
+            return "No previous conversation."
         
-        # Initialize relevant entities
-        relevant = {}
+        # Get the last user query and any relevant function results
+        last_user_query = None
+        last_function_result = None
         
-        # Check which entity types are mentioned in the query
-        for entity_type, entities in self.known_entities.items():
-            # Entity type mentioned (e.g., "mechanics" or "machines")
-            if entity_type.lower() in query_lower:
-                relevant[entity_type] = list(entities)
-                continue
-                
-            # Check for specific entity mentions
-            relevant_entities = []
-            for entity in entities:
-                if entity.lower() in query_lower:
-                    relevant_entities.append(entity)
+        for msg in reversed(self.conversation_history):
+            if msg["role"] == "user" and not last_user_query:
+                last_user_query = msg["content"]
+            elif msg["role"] == "function" and not last_function_result:
+                last_function_result = f"{msg.get('name', 'function')}: {msg['content'][:200]}..."
             
-            if relevant_entities:
-                relevant[entity_type] = relevant_entities
+            if last_user_query and last_function_result:
+                break
         
-        return relevant
+        summary_parts = []
+        if last_user_query:
+            summary_parts.append(f"Query: {last_user_query}")
+        if last_function_result:
+            summary_parts.append(f"Result: {last_function_result}")
+            
+        return "\n".join(summary_parts)

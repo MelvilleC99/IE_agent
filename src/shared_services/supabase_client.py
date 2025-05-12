@@ -38,13 +38,36 @@ class SupabaseClient:
         """
         Query a Supabase table with optional filters and return the result list.
         Logs actual elapsed time for the database call.
+        
+        Args:
+            table_name: Name of the table to query
+            columns: Columns to select (default: "*")
+            filters: Dictionary of filters where keys can be:
+                    - Simple column name for equality filter
+                    - "column.operator" for other operators (gte, lte, gt, lt, etc.)
+            limit: Maximum number of records to return
         """
         start = time.time()
         try:
             q = self.client.table(table_name).select(columns)
             if filters:
                 for col, val in filters.items():
-                    q = q.eq(col, val)
+                    if '.' in col:
+                        # Handle operators like gte, lte, etc.
+                        col_name, operator = col.split('.')
+                        if operator == 'gte':
+                            q = q.gte(col_name, val)
+                        elif operator == 'lte':
+                            q = q.lte(col_name, val)
+                        elif operator == 'gt':
+                            q = q.gt(col_name, val)
+                        elif operator == 'lt':
+                            q = q.lt(col_name, val)
+                        else:
+                            logger.warning(f"Unsupported operator {operator} for column {col_name}")
+                    else:
+                        # Simple equality filter
+                        q = q.eq(col, val)
             q = q.limit(limit)
             response = q.execute()
 

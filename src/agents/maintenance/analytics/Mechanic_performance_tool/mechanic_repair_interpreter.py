@@ -11,7 +11,7 @@ Z_SCORE_THRESHOLD = 1.0  # Flag mechanics with Z-score > 1.0 (beyond 1 standard 
 TREND_THRESHOLD_PCT = 5.0  # Flag mechanics with deterioration > 5% per period
 TREND_P_VALUE_THRESHOLD = 0.05  # Only consider statistically significant trends
 
-def interpret_analysis_results(analysis_summary: dict) -> list[dict]:
+def interpret_analysis_results(analysis_summary: dict) -> list:
     """
     Interprets the focused analysis summary using statistical methods,
     identifies actionable findings based on the three main dimensions:
@@ -36,13 +36,13 @@ def interpret_analysis_results(analysis_summary: dict) -> list[dict]:
         std_dev_response = statistical_measures.get('std_dev_response_time')
         
         for mechanic_stat in analysis_summary['overall_response']['mechanic_stats']:
-            mechanic_name = mechanic_stat['mechanicName']
+            mechanic_name = mechanic_stat.get('mechanic_name', '')
             mechanic_employee_num = mechanic_dict.get(mechanic_name, 'Unknown')
             
             # Check response time Z-score
             response_z_score = mechanic_stat.get('response_z_score')
             if response_z_score is not None and response_z_score > Z_SCORE_THRESHOLD:
-                response_time = mechanic_stat['avgResponseTime_min']
+                response_time = mechanic_stat.get('avg_response_time_min', 0)
                 
                 finding_summary = (
                     f"RESPONSE TIME ALERT: {mechanic_name} (#{mechanic_employee_num}) average response time is "
@@ -83,13 +83,13 @@ def interpret_analysis_results(analysis_summary: dict) -> list[dict]:
             
             # Process each mechanic's performance on this machine type
             for mechanic_stat in machine_data['mechanic_stats']:
-                mechanic_name = mechanic_stat.get('mechanicName')
+                mechanic_name = mechanic_stat.get('mechanic_name', '')
                 mechanic_employee_num = mechanic_dict.get(mechanic_name, 'Unknown')
                 
                 # Check repair time Z-score for this machine type
-                z_score = mechanic_stat.get('z_score')
+                z_score = mechanic_stat.get('repair_z_score')
                 if z_score is not None and z_score > Z_SCORE_THRESHOLD:
-                    repair_time = mechanic_stat['avgRepairTime_min']
+                    repair_time = mechanic_stat.get('avg_repair_time_min', 0)
                     
                     finding_summary = (
                         f"MACHINE-SPECIFIC REPAIR TIME: {mechanic_name} (#{mechanic_employee_num}) on {machine_type} machines: "
@@ -137,13 +137,13 @@ def interpret_analysis_results(analysis_summary: dict) -> list[dict]:
             
             # Process each mechanic's performance on this combination
             for mechanic_stat in combo_data['mechanic_stats']:
-                mechanic_name = mechanic_stat.get('mechanicName')
+                mechanic_name = mechanic_stat.get('mechanic_name', '')
                 mechanic_employee_num = mechanic_dict.get(mechanic_name, 'Unknown')
                 
                 # Check repair time Z-score for this combination
-                z_score = mechanic_stat.get('z_score')
+                z_score = mechanic_stat.get('repair_z_score')
                 if z_score is not None and z_score > Z_SCORE_THRESHOLD:
-                    repair_time = mechanic_stat['avgRepairTime_min']
+                    repair_time = mechanic_stat.get('avg_repair_time_min', 0)
                     
                     finding_summary = (
                         f"SPECIFIC MACHINE-ISSUE COMBINATION: {mechanic_name} (#{mechanic_employee_num}) on {machine_type} with '{reason}' issues: "
@@ -184,7 +184,7 @@ def interpret_analysis_results(analysis_summary: dict) -> list[dict]:
                 pct_change = trend_data.get('pct_change_per_period')
                 is_significant = trend_data.get('is_significant', False)
                 
-                # Only flag significant deteriorating trends (positive percentage means increasing repair time)
+               # Only flag significant deteriorating trends (positive percentage means increasing repair time)
                 if (pct_change is not None and pct_change > TREND_THRESHOLD_PCT and is_significant):
                     periods = trend_data.get('periods_analyzed', 0)
                     p_value = trend_data.get('p_value', 1.0)
@@ -298,19 +298,24 @@ def get_mechanic_info():
 
 # Test function for direct execution
 if __name__ == '__main__':
-    import json
+    from shared_services.db_client import get_connection
     
-    # Load sample summary data for testing
-    try:
-        with open("test_summary_output.json", "r") as f:
-            test_summary = json.load(f)
-        findings = interpret_analysis_results(test_summary)
-        print(f"\n--- Interpreter Test Results ---")
-        print(f"Found {len(findings)} potential findings:")
-        for i, f in enumerate(findings):
-            if i < 10:  # Only show first 10 findings to avoid overwhelming output
-                print(f"- {f['finding_summary']}")
-            elif i == 10:
-                print(f"... and {len(findings) - 10} more findings.")
-    except FileNotFoundError:
-        print("Create a 'test_summary_output.json' file from the analyzer script first.")
+    supabase = get_connection()
+    if supabase:
+        # Get the most recent analysis results from the database
+        analysis_result = supabase.table('mechanic_performance').select('*').order('created_at', desc=True).limit(1).execute()
+        
+        if analysis_result.data:
+            analysis_summary = analysis_result.data[0]
+            findings = interpret_analysis_results(analysis_summary)
+            print(f"\n--- Interpreter Test Results ---")
+            print(f"Found {len(findings)} potential findings:")
+            for i, f in enumerate(findings):
+                if i < 10:  # Only show first 10 findings to avoid overwhelming output
+                    print(f"- {f['finding_summary']}")
+                elif i == 10:
+                    print(f"... and {len(findings) - 10} more findings.")
+        else:
+            print("No analysis results found in database")
+    else:
+        print("Could not connect to database")

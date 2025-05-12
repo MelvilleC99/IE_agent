@@ -1,4 +1,3 @@
-import json
 import pandas as pd
 import numpy as np
 from scipy import stats
@@ -70,7 +69,7 @@ def calculate_z_scores(data_series):
         # Return safe defaults
         return [0.0] * len(data_series), 0.0, 0.0
 
-def calculate_trend(time_series_data, time_field='time_period', value_field='avgRepairTime_min'):
+def calculate_trend(time_series_data, time_field='time_period', value_field='avg_repair_time_min'):
     """
     Calculate trend statistics for time series data.
     Returns slope, percentage change per period, and p-value.
@@ -88,11 +87,20 @@ def calculate_trend(time_series_data, time_field='time_period', value_field='avg
     # Calculate regression statistics
     slope, intercept, r_value, p_value, std_err = stats.linregress(x_values, y_values)
     
-    # Convert all values to float explicitly using numpy's item()
-    slope_float = float(slope.item())  # type: ignore
-    intercept_float = float(intercept.item())  # type: ignore
-    p_value_float = float(p_value.item())  # type: ignore
-    r_value_float = float(r_value.item())  # type: ignore
+    # Convert numpy scalar types to Python floats using convert_to_native_types and ensure float type
+    def safe_float_convert(value):
+        try:
+            converted = convert_to_native_types(value)
+            if isinstance(converted, (int, float)):
+                return float(converted)
+            return 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    slope_float = safe_float_convert(slope)
+    intercept_float = safe_float_convert(intercept)
+    p_value_float = safe_float_convert(p_value)
+    r_value_float = safe_float_convert(r_value)
     
     # Calculate percentage change with explicit float operations
     if intercept_float > 0:
@@ -135,32 +143,37 @@ def mechanic_by_category_summary(df, category_field):
             category_data = df[df[category_field] == category]
             
             # Group by mechanic within this category
-            mechanic_stats = category_data.groupby("mechanicName").agg(
-                avgRepairTime_min=("repairTime_min", "mean"),
-                avgResponseTime_min=("responseTime_min", "mean"),
-                count=("repairTime_min", "count")
+            mechanic_stats = category_data.groupby("mechanic_name").agg(
+                avg_repair_time_min=("repair_time_min", "mean"),
+                avg_response_time_min=("response_time_min", "mean"),
+                count=("repair_time_min", "count")
             ).reset_index()
             
             if mechanic_stats.empty:
                 continue
             
             # Calculate traditional best-performer comparison
-            best_idx = mechanic_stats["avgRepairTime_min"].idxmin()
+            best_idx = mechanic_stats["avg_repair_time_min"].idxmin()
             if best_idx is not None:
                 best_row = mechanic_stats.loc[best_idx].copy()
-                best_val = float(best_row["avgRepairTime_min"])
+                best_val = float(best_row["avg_repair_time_min"])
                 
                 # Calculate percentage differences
-                mechanic_stats["pct_worse_than_best"] = mechanic_stats["avgRepairTime_min"].apply(
+                mechanic_stats["pct_worse_than_best"] = mechanic_stats["avg_repair_time_min"].apply(
                     lambda x: safe_pct(float(x), best_val)
                 )
             else:
                 mechanic_stats["pct_worse_than_best"] = None
             
             # Calculate Z-scores for repair times
-            repair_times = [float(rt) for rt in mechanic_stats["avgRepairTime_min"]]
+            repair_times = [float(rt) for rt in mechanic_stats["avg_repair_time_min"]]
             z_scores, mean_repair_time, std_repair_time = calculate_z_scores(repair_times)
-            mechanic_stats["z_score"] = z_scores
+            mechanic_stats["repair_z_score"] = z_scores
+            
+            # Calculate Z-scores for response times
+            response_times = [float(rt) for rt in mechanic_stats["avg_response_time_min"]]
+            resp_z_scores, mean_response_time, std_response_time = calculate_z_scores(response_times)
+            mechanic_stats["response_z_score"] = resp_z_scores
             
             # Create the summary for this category
             if best_idx is not None:
@@ -173,7 +186,9 @@ def mechanic_by_category_summary(df, category_field):
                 "best": best_mechanic,
                 "statistical_measures": {
                     "mean_repair_time": mean_repair_time,
-                    "std_dev_repair_time": std_repair_time
+                    "std_dev_repair_time": std_repair_time,
+                    "mean_response_time": mean_response_time,
+                    "std_dev_response_time": std_response_time
                 }
             }
             
@@ -191,21 +206,22 @@ def mechanic_by_machine_reason(df):
     """
     try:
         # Get unique combinations of machine type and reason
-        combinations = df.groupby(["machineType", "reason"]).size().reset_index()
+        combinations = df.groupby(["machine_type", "reason"]).size().reset_index()
         result = {}
         
         # For each combination, analyze how mechanics perform
         for _, combo in combinations.iterrows():
-            machine_type = combo["machineType"]
+            machine_type = combo["machine_type"]
             reason = combo["reason"]
             
             # Filter data for this combination
-            combo_data = df[(df["machineType"] == machine_type) & (df["reason"] == reason)]
+            combo_data = df[(df["machine_type"] == machine_type) & (df["reason"] == reason)]
             
             # Group by mechanic within this combination
-            mechanic_stats = combo_data.groupby("mechanicName").agg(
-                avgRepairTime_min=("repairTime_min", "mean"),
-                count=("repairTime_min", "count")
+            mechanic_stats = combo_data.groupby("mechanic_name").agg(
+                avg_repair_time_min=("repair_time_min", "mean"),
+                avg_response_time_min=("response_time_min", "mean"),
+                count=("repair_time_min", "count")
             ).reset_index()
             
             if mechanic_stats.empty:
@@ -213,23 +229,30 @@ def mechanic_by_machine_reason(df):
                 
             # Calculate Z-scores (if there's more than one mechanic for comparison)
             if len(mechanic_stats) > 1:
-                repair_times = [float(rt) for rt in mechanic_stats["avgRepairTime_min"]]
+                repair_times = [float(rt) for rt in mechanic_stats["avg_repair_time_min"]]
                 z_scores, mean_repair_time, std_repair_time = calculate_z_scores(repair_times)
-                mechanic_stats["z_score"] = z_scores
+                mechanic_stats["repair_z_score"] = z_scores
+                
+                response_times = [float(rt) for rt in mechanic_stats["avg_response_time_min"]]
+                resp_z_scores, mean_response_time, std_response_time = calculate_z_scores(response_times)
+                mechanic_stats["response_z_score"] = resp_z_scores
             else:
                 # Only one mechanic, so no meaningful Z-score
-                mechanic_stats["z_score"] = 0
-                mean_repair_time = float(mechanic_stats["avgRepairTime_min"].iloc[0])
+                mechanic_stats["repair_z_score"] = 0
+                mechanic_stats["response_z_score"] = 0
+                mean_repair_time = float(mechanic_stats["avg_repair_time_min"].iloc[0])
                 std_repair_time = 0
+                mean_response_time = float(mechanic_stats["avg_response_time_min"].iloc[0])
+                std_response_time = 0
             
             # Find the best performer
-            best_idx = mechanic_stats["avgRepairTime_min"].idxmin()
+            best_idx = mechanic_stats["avg_repair_time_min"].idxmin()
             if best_idx is not None:
                 best_row = mechanic_stats.loc[best_idx].copy()
-                best_val = float(best_row["avgRepairTime_min"])
+                best_val = float(best_row["avg_repair_time_min"])
                 
                 # Calculate percentage differences
-                mechanic_stats["pct_worse_than_best"] = mechanic_stats["avgRepairTime_min"].apply(
+                mechanic_stats["pct_worse_than_best"] = mechanic_stats["avg_repair_time_min"].apply(
                     lambda x: safe_pct(float(x), best_val)
                 )
                 
@@ -248,6 +271,8 @@ def mechanic_by_machine_reason(df):
                 "statistical_measures": {
                     "mean_repair_time": mean_repair_time,
                     "std_dev_repair_time": std_repair_time,
+                    "mean_response_time": mean_response_time,
+                    "std_dev_response_time": std_response_time,
                     "mechanic_count": len(mechanic_stats)
                 }
             }
@@ -287,134 +312,163 @@ def convert_to_native_types(obj):
         print(f"Warning in convert_to_native_types: {e}, returning string representation")
         return str(obj)
 
-def run_mechanic_analysis(data_source_path: str = "/Users/melville/Documents/Industrial_Engineering_Agent/maintenance_data.json") -> dict:
+def run_mechanic_analysis(start_date=None, end_date=None) -> dict:
     """
-    Focused mechanic performance analyzer with specific analysis dimensions:
-    1. Overall response time performance
-    2. Repair time performance by machine type
-    3. Repair time performance by machine + reason combination
-    4. Trend analysis for repair and response times
+    Run mechanic performance analysis using data from the database.
+    
+    Args:
+        start_date: Start date for analysis period (optional)
+        end_date: End date for analysis period (optional)
+        
+    Returns:
+        dict: Analysis results
     """
-    print(f"ANALYZER: Reading data from {data_source_path}")
     try:
-        with open(data_source_path, "r") as f:
-            data = json.load(f)
-        df = pd.DataFrame(data)
-    except Exception as e:
-        print(f"ANALYZER: Error reading data file: {e}")
-        return {} # Return empty dict on error
-
-    # --- Data preparation ---
-    conversion_factor = 60000
-    df["repairTime_min"] = pd.to_numeric(df["totalRepairTime"], errors="coerce").fillna(0) / conversion_factor
-    df["responseTime_min"] = pd.to_numeric(df["totalResponseTime"], errors="coerce").fillna(0) / conversion_factor
-    
-    # Check if we have timestamp data for trend analysis
-    has_timestamp = False
-    if "timestamp" in df.columns:
-        try:
-            df["time_period"] = pd.to_datetime(df["timestamp"]).dt.to_period('M')
-            has_timestamp = True
-            print("ANALYZER: Timestamp data found - will perform trend analysis")
-        except Exception as e:
-            print(f"ANALYZER: Could not process timestamps for trend analysis: {e}")
-    
-    # --- 1. Overall mechanic performance analysis (focus on response time) ---
-    overall_stats = df.groupby("mechanicName").agg(
-        avgRepairTime_min=("repairTime_min", "mean"),
-        avgResponseTime_min=("responseTime_min", "mean"),
-        count=("repairTime_min", "count")
-    ).reset_index()
-
-    if overall_stats.empty:
-        print("ANALYZER: No data found for overall stats.")
-        return {}
-
-    # Add Z-score calculations for response time
-    response_times = overall_stats["avgResponseTime_min"].values
-    resp_z_scores, mean_response_time, std_response_time = calculate_z_scores(response_times)
-    overall_stats["response_z_score"] = resp_z_scores
-    
-    # Also include repair time Z-scores for completeness
-    repair_times = overall_stats["avgRepairTime_min"].values
-    repair_z_scores, mean_repair_time, std_repair_time = calculate_z_scores(repair_times)
-    overall_stats["repair_z_score"] = repair_z_scores
-
-    overall_summary = {
-        "mechanic_stats": overall_stats.to_dict(orient="records"),
-        "statistical_measures": {
-            "mean_response_time": mean_response_time,
-            "std_dev_response_time": std_response_time,
-            "mean_repair_time": mean_repair_time,
-            "std_dev_repair_time": std_repair_time
-        }
-    }
-
-    # --- 2. Mechanic performance by machine type (focus on repair time) ---
-    mechanic_by_machine = mechanic_by_category_summary(df, "machineType")
-    
-    # --- 3. Mechanic performance by machine + reason combination (focus on repair time) ---
-    machine_reason_summary = mechanic_by_machine_reason(df)
-    
-    # --- 4. Trend analysis (if timestamp data available) ---
-    trend_summary = {}
-    if has_timestamp:
-        # Group by mechanic and time period
-        trend_data = df.groupby(["mechanicName", "time_period"]).agg(
-            avgRepairTime_min=("repairTime_min", "mean"),
-            avgResponseTime_min=("responseTime_min", "mean"),
-            count=("repairTime_min", "count")
+        # Get database connection
+        from shared_services.db_client import get_connection
+        supabase = get_connection()
+        
+        if not supabase:
+            print("Error: Could not connect to database")
+            return {}
+            
+        # Build query filters
+        filters = []
+        if start_date:
+            if isinstance(start_date, str):
+                start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            filters.append({"column": "resolved_at", "operator": "gte", "value": start_date.isoformat()})
+            
+        if end_date:
+            if isinstance(end_date, str):
+                end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            filters.append({"column": "resolved_at", "operator": "lte", "value": end_date.isoformat()})
+        
+        # Query the database
+        query = supabase.table("downtime_detail").select("*")
+        
+        # Apply filters if they exist
+        for filter_item in filters:
+            query = query.filter(filter_item["column"], filter_item["operator"], filter_item["value"])
+            
+        records = query.execute()
+        
+        if not records.data:
+            print("No records found in database")
+            return {}
+            
+        # Convert to DataFrame
+        df = pd.DataFrame(records.data)
+        
+        # --- Data preparation ---
+        conversion_factor = 60  # Convert seconds to minutes
+        df["repair_time_min"] = pd.to_numeric(df["total_repair_time"], errors="coerce").fillna(0) / conversion_factor
+        df["response_time_min"] = pd.to_numeric(df["total_response_time"], errors="coerce").fillna(0) / conversion_factor
+        
+        # Check if we have timestamp data for trend analysis
+        has_timestamp = False
+        if "resolved_at" in df.columns:
+            try:
+                # Using ISO8601 format for flexible timestamp parsing
+                df["time_period"] = pd.to_datetime(df["resolved_at"], format='ISO8601').dt.to_period('M')
+                has_timestamp = True
+                print("ANALYZER: Timestamp data found - will perform trend analysis")
+            except Exception as e:
+                print(f"ANALYZER: Could not process timestamps for trend analysis: {e}")
+        
+        # --- 1. Overall mechanic performance analysis (focus on response time) ---
+        overall_stats = df.groupby("mechanic_name").agg(
+            avg_repair_time_min=("repair_time_min", "mean"),
+            avg_response_time_min=("response_time_min", "mean"),
+            count=("repair_time_min", "count")
         ).reset_index()
-        
-        # Calculate trend for each mechanic's repair time
-        repair_trends = {}
-        for mechanic in df["mechanicName"].unique():
-            mechanic_data = trend_data[trend_data["mechanicName"] == mechanic]
-            trend_stats = calculate_trend(mechanic_data, value_field="avgRepairTime_min")
-            if trend_stats:
-                repair_trends[mechanic] = trend_stats
-        
-        # Calculate trend for each mechanic's response time
-        response_trends = {}
-        for mechanic in df["mechanicName"].unique():
-            mechanic_data = trend_data[trend_data["mechanicName"] == mechanic]
-            trend_stats = calculate_trend(mechanic_data, value_field="avgResponseTime_min")
-            if trend_stats:
-                response_trends[mechanic] = trend_stats
-                
-        trend_summary = {
-            "repair_time": repair_trends,
-            "response_time": response_trends
-        }
-    
-    # --- Combine all results ---
-    final_summary = {
-        "overall_response": overall_summary,  # Focus on response time
-        "machine_repair": mechanic_by_machine,  # Focus on repair time by machine
-        "machine_reason_repair": machine_reason_summary,  # Focus on repair time by machine+reason
-        "trends": trend_summary if trend_summary else {}  # Include trend data
-    }
 
-    print("ANALYZER: Focused analysis complete.")
-    result = convert_to_native_types(final_summary)
-    
-    # Ensure we're returning a dictionary
-    if not isinstance(result, dict):
-        print("ANALYZER: Warning - result is not a dictionary, returning empty dict")
-        return {}
+        if overall_stats.empty:
+            print("ANALYZER: No data found for overall stats.")
+            return {}
+
+        # Add Z-score calculations for response time
+        response_times = overall_stats["avg_response_time_min"].values
+        resp_z_scores, mean_response_time, std_response_time = calculate_z_scores(response_times)
+        overall_stats["response_z_score"] = resp_z_scores
         
-    return result
+        # Also include repair time Z-scores for completeness
+        repair_times = overall_stats["avg_repair_time_min"].values
+        repair_z_scores, mean_repair_time, std_repair_time = calculate_z_scores(repair_times)
+        overall_stats["repair_z_score"] = repair_z_scores
+
+        overall_summary = {
+            "mechanic_stats": overall_stats.to_dict(orient="records"),
+            "statistical_measures": {
+                "mean_response_time": mean_response_time,
+                "std_dev_response_time": std_response_time,
+                "mean_repair_time": mean_repair_time,
+                "std_dev_repair_time": std_repair_time
+            }
+        }
+
+        # --- 2. Mechanic performance by machine type (focus on repair time) ---
+        mechanic_by_machine = mechanic_by_category_summary(df, "machine_type")
+        
+        # --- 3. Mechanic performance by machine + reason combination (focus on repair time) ---
+        machine_reason_summary = mechanic_by_machine_reason(df)
+        
+        # --- 4. Trend analysis (if timestamp data available) ---
+        trend_summary = {}
+        if has_timestamp:
+            # Group by mechanic and time period
+            trend_data = df.groupby(["mechanic_name", "time_period"]).agg(
+                avg_repair_time_min=("repair_time_min", "mean"),
+                avg_response_time_min=("response_time_min", "mean"),
+                count=("repair_time_min", "count")
+            ).reset_index()
+            
+            # Calculate trend for each mechanic's repair time
+            repair_trends = {}
+            for mechanic in df["mechanic_name"].unique():
+                mechanic_data = trend_data[trend_data["mechanic_name"] == mechanic]
+                trend_stats = calculate_trend(mechanic_data, value_field="avg_repair_time_min")
+                if trend_stats:
+                    repair_trends[mechanic] = trend_stats
+            
+            # Calculate trend for each mechanic's response time
+            response_trends = {}
+            for mechanic in df["mechanic_name"].unique():
+                mechanic_data = trend_data[trend_data["mechanic_name"] == mechanic]
+                trend_stats = calculate_trend(mechanic_data, value_field="avg_response_time_min")
+                if trend_stats:
+                    response_trends[mechanic] = trend_stats
+                    
+            trend_summary = {
+                "repair_time": repair_trends,
+                "response_time": response_trends
+            }
+        
+        # --- Combine all results ---
+        final_summary = {
+            "overall_response": overall_summary,  # Focus on response time
+            "machine_repair": mechanic_by_machine,  # Focus on repair time by machine
+            "machine_reason_repair": machine_reason_summary,  # Focus on repair time by machine+reason
+            "trends": trend_summary if trend_summary else {}  # Include trend data
+        }
+
+        print("ANALYZER: Focused analysis complete.")
+        result = convert_to_native_types(final_summary)
+        
+        # Ensure we're returning a dictionary
+        if not isinstance(result, dict):
+            print("ANALYZER: Warning - result is not a dictionary, returning empty dict")
+            return {}
+        
+        return result
+    except Exception as e:
+        print(f"Error in run_mechanic_analysis: {e}")
+        return {}
 
 # Test function if run directly
 if __name__ == '__main__':
     summary = run_mechanic_analysis()
-    if summary:
-        print("\n--- Generated Summary (sample) ---")
-        print("Overall mechanic count:", len(summary.get('overall_response', {}).get('mechanic_stats', [])))
-        print("Machine types analyzed:", len(summary.get('machine_repair', {})))
-        print("Machine+Reason combinations:", len(summary.get('machine_reason_repair', {})))
-        
-        # Save to test_summary_output.json
-        with open("test_summary_output.json", "w") as f:
-            json.dump(summary, f, indent=2)
-        print("Focused summary saved to test_summary_output.json")
+    print("\n--- Generated Summary (sample) ---")
+    print("Overall mechanic count:", len(summary.get('overall_response', {}).get('mechanic_stats', [])))
+    print("Machine types analyzed:", len(summary.get('machine_repair', {})))
+    print("Machine+Reason combinations:", len(summary.get('machine_reason_repair', {})))

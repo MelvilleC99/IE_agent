@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import sys
 import os
-import json
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -17,6 +17,13 @@ load_dotenv(Path(__file__).resolve().parents[3] / ".env.local")
 
 from shared_services.db_client import get_connection
 
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
 class NotificationHandler:
     """
     Handles creation and sending of notifications for the maintenance system.
@@ -26,20 +33,20 @@ class NotificationHandler:
         """Initialize the notification handler"""
         try:
             self.supabase = get_connection()
-            print("NOTIFICATION: Initialized notification handler")
+            logger.info("NOTIFICATION: Initialized notification handler")
         except Exception as e:
-            print(f"NOTIFICATION: Error connecting to database: {e}")
+            logger.error(f"NOTIFICATION: Error connecting to database: {e}")
             self.supabase = None
         
-    def create_notification(self, task_id=None, evaluation_id=None, recipient="maintenance_manager", 
+    def create_notification(self, watchlist_id=None, evaluation_id=None, recipient="maintenance_manager", 
                            notification_type="dashboard", subject=None, message=None, 
                            status="pending"):
         """
         Create a notification in the database
         
         Args:
-            task_id: Optional ID of the related task
-            evaluation_id: Optional ID of the related task evaluation
+            watchlist_id: Optional ID of the related watchlist item
+            evaluation_id: Optional ID of the related watchlist evaluation
             recipient: Who should receive the notification (email, user ID, role)
             notification_type: Type of notification (email, sms, dashboard)
             subject: Subject line for the notification
@@ -50,15 +57,15 @@ class NotificationHandler:
             dict: The created notification record or None if creation failed
         """
         if not self.supabase:
-            print("NOTIFICATION: Cannot create notification - no database connection")
+            logger.error("NOTIFICATION: Cannot create notification - no database connection")
             return None
             
         if not message:
-            print("NOTIFICATION: Cannot create notification without message")
+            logger.error("NOTIFICATION: Cannot create notification without message")
             return None
             
         notification_data = {
-            "task_id": task_id,
+            "watchlist_id": watchlist_id,
             "evaluation_id": evaluation_id,
             "recipient": recipient,
             "notification_type": notification_type,
@@ -73,70 +80,70 @@ class NotificationHandler:
             
             if result.data:
                 notification_id = result.data[0]['id']
-                print(f"NOTIFICATION: Created notification ID {notification_id}")
+                logger.info(f"NOTIFICATION: Created notification ID {notification_id}")
                 return result.data[0]
             else:
-                print("NOTIFICATION: Failed to create notification")
+                logger.error("NOTIFICATION: Failed to create notification")
                 return None
                 
         except Exception as e:
-            print(f"NOTIFICATION: Error creating notification: {e}")
+            logger.error(f"NOTIFICATION: Error creating notification: {e}")
             return None
     
-    def create_task_creation_notification(self, tasks):
+    def create_watchlist_creation_notification(self, watchlist_items):
         """
-        Create a notification for newly created tasks
+        Create a notification for newly created watchlist items
         
         Args:
-            tasks: List of task records that were created
+            watchlist_items: List of watchlist records that were created
             
         Returns:
             dict: The created notification or None if creation failed
         """
-        if not tasks:
+        if not watchlist_items:
             return None
             
-        # Group tasks by mechanic
+        # Group watchlist items by mechanic
         mechanics = {}
-        for task in tasks:
-            mechanic_name = task.get('mechanic_name')
-            mechanic_id = task.get('mechanic_id')
+        for item in watchlist_items:
+            mechanic_name = item.get('mechanic_name')
+            mechanic_id = item.get('mechanic_id')
             key = f"{mechanic_name} (#{mechanic_id})"
             
             if key not in mechanics:
                 mechanics[key] = []
                 
-            mechanics[key].append(task)
+            mechanics[key].append(item)
         
         # Create notification message
-        subject = f"New Maintenance Tasks Created ({len(tasks)} tasks)"
+        subject = f"New Maintenance Watchlist Items Created ({len(watchlist_items)} items)"
         
-        message = f"The system has identified {len(tasks)} new maintenance tasks for monitoring:\n\n"
+        message = f"The system has identified {len(watchlist_items)} new maintenance watchlist items for monitoring:\n\n"
         
-        for mechanic, mech_tasks in mechanics.items():
-            message += f"# {mechanic}: {len(mech_tasks)} tasks\n"
+        for mechanic, mech_items in mechanics.items():
+            message += f"# {mechanic}: {len(mech_items)} watchlist items\n"
             
-            for task in mech_tasks:
-                issue_type = task.get('issue_type', '').replace('_', ' ').title()
-                end_date = task.get('monitor_end_date', 'unknown')
-                frequency = task.get('monitor_frequency', 'unknown')
+            for item in mech_items:
+                issue_type = item.get('issue_type', '').replace('_', ' ').title()
+                end_date = item.get('monitor_end_date', 'unknown')
+                frequency = item.get('monitor_frequency', 'unknown')
                 
-                # Format additional context based on task type
+                # Format additional context based on item type
                 context = ""
-                if task.get('machine_type'):
-                    context += f" - Machine: {task.get('machine_type')}"
-                if task.get('reason'):
-                    context += f" - Issue: {task.get('reason')}"
+                if item.get('machine_type'):
+                    context += f" - Machine: {item.get('machine_type')}"
+                if item.get('reason'):
+                    context += f" - Issue: {item.get('reason')}"
                     
-                message += f"- Task #{task.get('id')}: {issue_type}{context}\n"
+                message += f"- Watchlist Item #{item.get('id')}: {issue_type}{context}\n"
                 message += f"  Monitoring until {end_date} ({frequency} measurements)\n"
             
             message += "\n"
             
-        message += "Please review these tasks within 2 working days and assign them as needed."
+        message += "Please review these watchlist items within 2 working days and assign them as needed."
         
         # Create the notification
-        return self.create_notification(
+        return self.create_watchlist_notification(
             subject=subject,
             message=message,
             notification_type="dashboard",
@@ -144,12 +151,12 @@ class NotificationHandler:
             status="pending"
         )
     
-    def create_workflow_completion_notification(self, task_count):
+    def create_workflow_completion_notification(self, item_count):
         """
         Create a simple notification that the mechanic performance workflow has completed
         
         Args:
-            task_count: Number of tasks created
+            item_count: Number of watchlist items created
             
         Returns:
             dict: The created notification or None if creation failed
@@ -157,37 +164,114 @@ class NotificationHandler:
         subject = "Mechanic Performance Analysis Completed"
         
         message = f"The mechanic performance analysis workflow has completed.\n\n"
-        message += f"- {task_count} new task(s) have been created\n\n"
-        message += "Please review these tasks and assign them as appropriate."
+        message += f"- {item_count} new watchlist item(s) have been created\n\n"
+        message += "Please review these watchlist items and assign them as appropriate."
         
-        return self.create_notification(
+        return self.create_watchlist_notification(
             subject=subject,
             message=message,
             notification_type="dashboard",
             recipient="maintenance_manager",
             status="pending"
         )
+
+    def create_watchlist_notification(self, watchlist_id=None, evaluation_id=None, action=None, message=None, 
+                                    recipient="maintenance_manager", notification_type="dashboard", 
+                                    subject=None, status="pending"):
+        """
+        Create a notification for a watchlist item action
+        
+        Args:
+            watchlist_id: ID of the related watchlist item
+            evaluation_id: Optional ID of the related evaluation
+            action: Action taken on the watchlist item (e.g., 'close', 'extend')
+            message: Body content of the notification
+            recipient: Who should receive the notification (email, user ID, role)
+            notification_type: Type of notification (email, sms, dashboard)
+            subject: Subject line for the notification
+            status: Initial status of the notification (pending, sent, failed)
+            
+        Returns:
+            dict: The created notification record or None if creation failed
+        """
+        if not self.supabase:
+            logger.error("NOTIFICATION: Cannot create notification - no database connection")
+            return None
+            
+        if not message:
+            logger.error("NOTIFICATION: Cannot create notification without message")
+            return None
+            
+        # Get watchlist item details for subject line if not provided
+        if not subject and watchlist_id:
+            try:
+                item_result = self.supabase.table('watch_list').select('title').eq('id', watchlist_id).execute()
+                if item_result.data:
+                    title = item_result.data[0]['title']
+                    action_desc = action.capitalize() if action else "Update"
+                    subject = f"Watchlist Item {action_desc}: {title}"
+            except Exception as e:
+                logger.warning(f"NOTIFICATION: Could not get watchlist item title: {e}")
+        
+        if not subject:
+            subject = f"Watchlist Notification: {action.capitalize() if action else 'Update'}"
+            
+        # Create the notification
+        notification_data = {
+            "watchlist_id": watchlist_id,
+            "evaluation_id": evaluation_id,
+            "recipient": recipient,
+            "notification_type": notification_type,
+            "subject": subject,
+            "message": message,
+            "status": status,
+            "created_at": datetime.now().isoformat()
+        }
+        
+        try:
+            result = self.supabase.table('notification_logs').insert(notification_data).execute()
+            
+            if result.data:
+                notification_id = result.data[0]['id']
+                logger.info(f"NOTIFICATION: Created notification ID {notification_id}")
+                return result.data[0]
+            else:
+                logger.error("NOTIFICATION: Failed to create notification")
+                return None
+                
+        except Exception as e:
+            logger.error(f"NOTIFICATION: Error creating notification: {e}")
+            return None
+    
+    def process_evaluation_notifications(self):
+        """
+        Process and send all pending evaluation notifications
+        
+        Returns:
+            list: Notifications that were processed
+        """
+        return self.send_pending_notifications()
     
     def send_pending_notifications(self):
         """
         Process and send all pending notifications
         
         Returns:
-            int: Number of notifications successfully sent
+            list: Notifications that were processed
         """
         if not self.supabase:
-            print("NOTIFICATION: Cannot send notifications - no database connection")
-            return 0
+            logger.error("NOTIFICATION: Cannot send notifications - no database connection")
+            return []
             
         # This is a placeholder - in a real system, this would connect to email/SMS/etc. services
         try:
             result = self.supabase.table('notification_logs').select('*').eq('status', 'pending').execute()
             
             if not result.data:
-                print("NOTIFICATION: No pending notifications to send")
-                return 0
+                logger.info("NOTIFICATION: No pending notifications to send")
+                return []
                 
-            sent_count = 0
+            sent_notifications = []
             for notification in result.data:
                 # In a real implementation, this would send via the appropriate channel
                 # For now, we'll just update the status
@@ -199,32 +283,32 @@ class NotificationHandler:
                 }).eq('id', notification_id).execute()
                 
                 if update_result.data:
-                    sent_count += 1
-                    print(f"NOTIFICATION: Marked notification {notification_id} as sent")
+                    sent_notifications.append(update_result.data[0])
+                    logger.info(f"NOTIFICATION: Marked notification {notification_id} as sent")
                     
-            print(f"NOTIFICATION: Processed {sent_count} notifications")
-            return sent_count
+            logger.info(f"NOTIFICATION: Processed {len(sent_notifications)} notifications")
+            return sent_notifications
             
         except Exception as e:
-            print(f"NOTIFICATION: Error sending notifications: {e}")
-            return 0
+            logger.error(f"NOTIFICATION: Error sending notifications: {e}")
+            return []
 
 # Test function for direct execution
 if __name__ == '__main__':
     handler = NotificationHandler()
     
-    # Test creating a simple notification
-    test_notification = handler.create_notification(
+    # Test creating a notification
+    test_notification = handler.create_watchlist_notification(
+        watchlist_id="123",
+        action="extend",
+        message="Test notification message",
         subject="Test Notification",
-        message="This is a test notification from the notification handler.",
         notification_type="dashboard",
-        recipient="test_user",
+        recipient="maintenance_manager",
         status="pending"
     )
     
     if test_notification:
-        print("Successfully created test notification!")
-    
-    # Process pending notifications
-    sent_count = handler.send_pending_notifications()
-    print(f"Sent {sent_count} notifications")
+        print(f"Created notification: {test_notification}")
+    else:
+        print("Failed to create notification")

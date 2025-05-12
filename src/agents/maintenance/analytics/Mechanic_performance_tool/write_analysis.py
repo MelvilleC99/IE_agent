@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import os
-import json
+import logging
 from datetime import datetime, timedelta, date
 from pathlib import Path
 from dotenv import load_dotenv
@@ -17,6 +17,13 @@ load_dotenv(Path(__file__).resolve().parents[3] / ".env.local")
 
 from shared_services.db_client import get_connection
 
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
 class AnalysisWriter:
     """
     Writes mechanic performance analysis results to the database for historical reference.
@@ -26,9 +33,9 @@ class AnalysisWriter:
         """Initialize the analysis writer"""
         try:
             self.supabase = get_connection()
-            print("WRITER: Connected to database successfully")
+            logger.info("WRITER: Connected to database successfully")
         except Exception as e:
-            print(f"WRITER: Error connecting to database: {e}")
+            logger.error(f"WRITER: Error connecting to database: {e}")
             self.supabase = None
             
         self.today = datetime.now().date()
@@ -46,11 +53,11 @@ class AnalysisWriter:
             list: Records that were successfully written to the database
         """
         if not self.supabase:
-            print("WRITER: No database connection available")
+            logger.error("WRITER: No database connection available")
             return []
         
         if not analysis_results:
-            print("WRITER: No analysis results provided")
+            logger.error("WRITER: No analysis results provided")
             return []
             
         # Set default dates if not provided
@@ -65,7 +72,7 @@ class AnalysisWriter:
         if isinstance(period_end_date, (datetime, date)):
             period_end_date = period_end_date.isoformat()
             
-        print(f"WRITER: Writing analysis results for period {period_start_date} to {period_end_date}")
+        logger.info(f"WRITER: Writing analysis results for period {period_start_date} to {period_end_date}")
         
         # Records to be inserted or upserted
         records = []
@@ -80,19 +87,24 @@ class AnalysisWriter:
                 best_repair_time = float('inf')
                 
                 for mechanic in overall_stats:
-                    repair_time = mechanic.get('avgRepairTime_min', 0)
+                    repair_time = mechanic.get('avg_repair_time_min', 0)
                     if repair_time < best_repair_time and repair_time > 0:
                         best_repair_time = repair_time
-                        best_mechanic = mechanic.get('mechanicName')
+                        best_mechanic = mechanic.get('mechanic_name')
                 
                 # Create records for each mechanic
                 for mechanic in overall_stats:
-                    mechanic_name = mechanic.get('mechanicName')
+                    mechanic_name = mechanic.get('mechanic_name')
+                    
+                    # Skip records with null mechanic_name
+                    if not mechanic_name:
+                        logger.warning(f"WRITER: Skipping record with null mechanic_name")
+                        continue
                     
                     # Calculate percentage worse than best
                     pct_worse = None
                     if best_repair_time and best_repair_time > 0:
-                        repair_time = mechanic.get('avgRepairTime_min', 0)
+                        repair_time = mechanic.get('avg_repair_time_min', 0)
                         if repair_time > 0:
                             pct_worse = ((repair_time - best_repair_time) / best_repair_time) * 100
                     
@@ -101,8 +113,8 @@ class AnalysisWriter:
                         'dimension_1': None,
                         'dimension_2': None,
                         'mechanic_name': mechanic_name,
-                        'avg_repair_time_min': mechanic.get('avgRepairTime_min'),
-                        'avg_response_time_min': mechanic.get('avgResponseTime_min'),
+                        'avg_repair_time_min': mechanic.get('avg_repair_time_min'),
+                        'avg_response_time_min': mechanic.get('avg_response_time_min'),
                         'pct_worse_than_best': pct_worse,
                         'is_best': mechanic_name == best_mechanic,
                         'period_start_date': period_start_date,
@@ -123,19 +135,24 @@ class AnalysisWriter:
                     best_repair_time = float('inf')
                     
                     for mechanic in mechanic_stats:
-                        repair_time = mechanic.get('avgRepairTime_min', 0)
+                        repair_time = mechanic.get('avg_repair_time_min', 0)
                         if repair_time < best_repair_time and repair_time > 0:
                             best_repair_time = repair_time
-                            best_mechanic = mechanic.get('mechanicName')
+                            best_mechanic = mechanic.get('mechanic_name')
                     
                     # Create records for each mechanic
                     for mechanic in mechanic_stats:
-                        mechanic_name = mechanic.get('mechanicName')
+                        mechanic_name = mechanic.get('mechanic_name')
+                        
+                        # Skip records with null mechanic_name
+                        if not mechanic_name:
+                            logger.warning(f"WRITER: Skipping record with null mechanic_name for {machine_type}")
+                            continue
                         
                         # Calculate percentage worse than best
                         pct_worse = None
                         if best_repair_time and best_repair_time > 0:
-                            repair_time = mechanic.get('avgRepairTime_min', 0)
+                            repair_time = mechanic.get('avg_repair_time_min', 0)
                             if repair_time > 0:
                                 pct_worse = ((repair_time - best_repair_time) / best_repair_time) * 100
                         
@@ -144,8 +161,8 @@ class AnalysisWriter:
                             'dimension_1': machine_type,
                             'dimension_2': None,
                             'mechanic_name': mechanic_name,
-                            'avg_repair_time_min': mechanic.get('avgRepairTime_min'),
-                            'avg_response_time_min': mechanic.get('avgResponseTime_min'),
+                            'avg_repair_time_min': mechanic.get('avg_repair_time_min'),
+                            'avg_response_time_min': mechanic.get('avg_response_time_min'),
                             'pct_worse_than_best': pct_worse,
                             'is_best': mechanic_name == best_mechanic,
                             'period_start_date': period_start_date,
@@ -166,19 +183,24 @@ class AnalysisWriter:
                     best_repair_time = float('inf')
                     
                     for mechanic in mechanic_stats:
-                        repair_time = mechanic.get('avgRepairTime_min', 0)
+                        repair_time = mechanic.get('avg_repair_time_min', 0)
                         if repair_time < best_repair_time and repair_time > 0:
                             best_repair_time = repair_time
-                            best_mechanic = mechanic.get('mechanicName')
+                            best_mechanic = mechanic.get('mechanic_name')
                     
                     # Create records for each mechanic
                     for mechanic in mechanic_stats:
-                        mechanic_name = mechanic.get('mechanicName')
+                        mechanic_name = mechanic.get('mechanic_name')
+                        
+                        # Skip records with null mechanic_name
+                        if not mechanic_name:
+                            logger.warning(f"WRITER: Skipping record with null mechanic_name for reason {reason}")
+                            continue
                         
                         # Calculate percentage worse than best
                         pct_worse = None
                         if best_repair_time and best_repair_time > 0:
-                            repair_time = mechanic.get('avgRepairTime_min', 0)
+                            repair_time = mechanic.get('avg_repair_time_min', 0)
                             if repair_time > 0:
                                 pct_worse = ((repair_time - best_repair_time) / best_repair_time) * 100
                         
@@ -187,8 +209,8 @@ class AnalysisWriter:
                             'dimension_1': reason,
                             'dimension_2': None,
                             'mechanic_name': mechanic_name,
-                            'avg_repair_time_min': mechanic.get('avgRepairTime_min'),
-                            'avg_response_time_min': mechanic.get('avgResponseTime_min'),
+                            'avg_repair_time_min': mechanic.get('avg_repair_time_min'),
+                            'avg_response_time_min': mechanic.get('avg_response_time_min'),
                             'pct_worse_than_best': pct_worse,
                             'is_best': mechanic_name == best_mechanic,
                             'period_start_date': period_start_date,
@@ -211,19 +233,24 @@ class AnalysisWriter:
                     best_repair_time = float('inf')
                     
                     for mechanic in mechanic_stats:
-                        repair_time = mechanic.get('avgRepairTime_min', 0)
+                        repair_time = mechanic.get('avg_repair_time_min', 0)
                         if repair_time < best_repair_time and repair_time > 0:
                             best_repair_time = repair_time
-                            best_mechanic = mechanic.get('mechanicName')
+                            best_mechanic = mechanic.get('mechanic_name')
                     
                     # Create records for each mechanic
                     for mechanic in mechanic_stats:
-                        mechanic_name = mechanic.get('mechanicName')
+                        mechanic_name = mechanic.get('mechanic_name')
+                        
+                        # Skip records with null mechanic_name
+                        if not mechanic_name:
+                            logger.warning(f"WRITER: Skipping record with null mechanic_name for {machine_type}/{reason}")
+                            continue
                         
                         # Calculate percentage worse than best
                         pct_worse = None
                         if best_repair_time and best_repair_time > 0:
-                            repair_time = mechanic.get('avgRepairTime_min', 0)
+                            repair_time = mechanic.get('avg_repair_time_min', 0)
                             if repair_time > 0:
                                 pct_worse = ((repair_time - best_repair_time) / best_repair_time) * 100
                         
@@ -232,8 +259,8 @@ class AnalysisWriter:
                             'dimension_1': machine_type,
                             'dimension_2': reason,
                             'mechanic_name': mechanic_name,
-                            'avg_repair_time_min': mechanic.get('avgRepairTime_min'),
-                            'avg_response_time_min': mechanic.get('avgResponseTime_min'),
+                            'avg_repair_time_min': mechanic.get('avg_repair_time_min'),
+                            'avg_response_time_min': mechanic.get('avg_response_time_min'),
                             'pct_worse_than_best': pct_worse,
                             'is_best': mechanic_name == best_mechanic,
                             'period_start_date': period_start_date,
@@ -242,7 +269,7 @@ class AnalysisWriter:
                         records.append(record)
             
             # Upsert all records into the database
-            print(f"WRITER: Upserting {len(records)} records into mechanic_performance")
+            logger.info(f"WRITER: Upserting {len(records)} records into mechanic_performance")
             
             successful_records = []
             for record in records:
@@ -255,30 +282,25 @@ class AnalysisWriter:
                 if result.data:
                     successful_records.append(result.data[0])
             
-            print(f"WRITER: Successfully wrote {len(successful_records)} records to the database")
+            logger.info(f"WRITER: Successfully wrote {len(successful_records)} records to the database")
             return successful_records
             
         except Exception as e:
-            print(f"WRITER: Error writing analysis results: {e}")
+            logger.error(f"WRITER: Error writing analysis results: {e}")
             return []
 
 # Test function for direct execution
 if __name__ == '__main__':
-    import argparse
+    from agents.maintenance.analytics.Mechanic_performance_tool.mechanic_repair_analyzer import run_mechanic_analysis
     
-    parser = argparse.ArgumentParser(description='Write analysis results to the database')
-    parser.add_argument('--file', help='Path to JSON file containing analysis results')
-    args = parser.parse_args()
+    # Run analysis and get results
+    analysis_results = run_mechanic_analysis()
     
-    if args.file and os.path.exists(args.file):
-        # Load analysis results from file
-        with open(args.file, 'r') as f:
-            analysis_results = json.load(f)
-        
+    if analysis_results:
         # Write results to database
         writer = AnalysisWriter()
         records = writer.write_analysis_results(analysis_results)
         
-        print(f"Wrote {len(records)} records to the mechanic_performance table")
+        logger.info(f"Wrote {len(records)} records to the mechanic_performance table")
     else:
-        print("Please provide a valid JSON file with analysis results using --file")
+        logger.error("No analysis results to write")

@@ -21,7 +21,7 @@ from src.shared_services.supabase_client import SupabaseClient
 
 # Import call_llm for type checking only
 if TYPE_CHECKING:
-    from src.agents.maintenance.maintenance_agent import call_llm  # type: ignore
+    from MCP.agents.deepseek_agent import call_llm  # type: ignore
 else:
     def call_llm(prompt: str) -> str:
         raise RuntimeError("LLM client function call_llm() not found. Please implement in maintenance_agent.py.")

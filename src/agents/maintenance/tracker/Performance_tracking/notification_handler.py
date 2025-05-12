@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
+import logging
 
 # Add project root to path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -19,50 +20,42 @@ from shared_services.db_client import get_connection
 
 class NotificationHandler:
     """
-    Handles sending notifications based on task evaluations.
-    Manages different message templates and notification channels.
-    """
-    def __init__(self):
-        self.today = datetime.now().date()
-        print(f"NOTIFY: Initializing for {self.today}")
-        
-        try:
-            # Connect to the database
-            self.supabase = get_connection()
-            print("NOTIFY: Connected to Supabase")
-        except Exception as e:
-            print(f"NOTIFY: Error initializing: {e}")
-            self.supabase = None
+    Notification Handler - Manages notifications for watchlist updates and evaluations.
     
-    def get_task_details(self, task_id):
+    This class is responsible for:
+    1. Creating notifications for watchlist events
+    2. Sending notifications to appropriate recipients
+    3. Logging notification history
+    """
+    
+    def __init__(self):
+        """Initialize the notification handler."""
+        self.supabase = get_connection()
+        self.logger = logging.getLogger(__name__)
+    
+    def get_watchlist_details(self, watchlist_id):
         """
-        Get task details from the database
+        Get details for a watchlist item.
         
         Args:
-            task_id: ID of the task to retrieve
+            watchlist_id: ID of the watchlist item to retrieve
             
         Returns:
-            dict: Task details or None if not found
+            dict: Watchlist item details or None if not found
         """
-        if not self.supabase:
-            print("NOTIFY: No database connection available")
-            return None
-            
         try:
-            result = self.supabase.table('tasks').select('*').eq('id', task_id).execute()
-            
+            result = self.supabase.table('watch_list').select('*').eq('id', watchlist_id).execute()
             if result.data:
                 return result.data[0]
-            else:
-                print(f"NOTIFY: No task found with ID {task_id}")
-                return None
+            self.logger.warning(f"No watchlist item found with ID {watchlist_id}")
+            return None
         except Exception as e:
-            print(f"NOTIFY: Error retrieving task: {e}")
+            self.logger.error(f"Error getting watchlist details: {str(e)}")
             return None
     
-    def get_evaluation(self, evaluation_id):
+    def get_evaluation_details(self, evaluation_id):
         """
-        Get evaluation details from the database
+        Get details for an evaluation.
         
         Args:
             evaluation_id: ID of the evaluation to retrieve
@@ -70,323 +63,278 @@ class NotificationHandler:
         Returns:
             dict: Evaluation details or None if not found
         """
-        if not self.supabase:
-            print("NOTIFY: No database connection available")
-            return None
-            
         try:
-            result = self.supabase.table('task_evaluations').select('*').eq('id', evaluation_id).execute()
-            
+            result = self.supabase.table('watchlist_evaluations').select('*').eq('id', evaluation_id).execute()
             if result.data:
                 return result.data[0]
-            else:
-                print(f"NOTIFY: No evaluation found with ID {evaluation_id}")
-                return None
+            self.logger.warning(f"No evaluation found with ID {evaluation_id}")
+            return None
         except Exception as e:
-            print(f"NOTIFY: Error retrieving evaluation: {e}")
+            self.logger.error(f"Error getting evaluation details: {str(e)}")
             return None
     
-    def create_message(self, task, evaluation):
+    def create_notification(self, watchlist_id=None, evaluation_id=None, recipient="maintenance_manager",
+                          action="update", message=None):
         """
-        Create a notification message based on task and evaluation
+        Create a notification for a watchlist event.
         
         Args:
-            task: Task details
-            evaluation: Evaluation details
+            watchlist_id: Optional ID of the related watchlist item
+            evaluation_id: Optional ID of the related evaluation
+            recipient: Recipient of the notification
+            action: Type of notification action
+            message: Optional custom message
             
         Returns:
-            dict: Message with subject and body
+            dict: Created notification record
         """
-        # Extract task details
-        task_title = task.get('title', 'Untitled Task')
-        mechanic_name = task.get('mechanic_name', 'Mechanic')
-        issue_type = task.get('issue_type', 'performance')
-        
-        # Extract evaluation details
-        decision = evaluation.get('decision', 'review')
-        explanation = evaluation.get('explanation', '')
-        recommendation = evaluation.get('recommendation', '')
-        
-        # Create message subject
-        if decision == 'close':
-            subject = f"Performance Task Completed: {task_title}"
-        elif decision == 'extend':
-            subject = f"Performance Task Extended: {task_title}"
-        elif decision == 'review':
-            subject = f"Performance Task Needs Review: {task_title}"
-        elif decision == 'intervene':
-            subject = f"URGENT: Intervention Needed for {task_title}"
-        else:
-            subject = f"Performance Task Update: {task_title}"
-        
-        # Create message body based on decision type
-        if decision == 'close':
-            body = f"""
-Hello,
-
-The performance monitoring task "{task_title}" for {mechanic_name} has been completed successfully.
-
-{explanation}
-
-{recommendation}
-
-No further action is required for this task.
-
-Thank you,
-Performance Monitoring System
-"""
-        elif decision == 'extend':
-            body = f"""
-Hello,
-
-The performance monitoring task "{task_title}" for {mechanic_name} has been extended for further monitoring.
-
-{explanation}
-
-{recommendation}
-
-The task will continue to be monitored for additional improvement.
-
-Thank you,
-Performance Monitoring System
-"""
-        elif decision == 'review':
-            body = f"""
-Hello,
-
-The performance monitoring task "{task_title}" for {mechanic_name} requires review.
-
-{explanation}
-
-{recommendation}
-
-Please review the task and determine the appropriate next steps.
-
-Thank you,
-Performance Monitoring System
-"""
-        elif decision == 'intervene':
-            body = f"""
-Hello,
-
-URGENT: The performance monitoring task "{task_title}" for {mechanic_name} requires immediate intervention.
-
-{explanation}
-
-{recommendation}
-
-Please take action as soon as possible to address this performance issue.
-
-Thank you,
-Performance Monitoring System
-"""
-        else:
-            body = f"""
-Hello,
-
-This is an update regarding the performance monitoring task "{task_title}" for {mechanic_name}.
-
-{explanation}
-
-{recommendation}
-
-Thank you,
-Performance Monitoring System
-"""
-        
-        return {
-            'subject': subject,
-            'body': body
-        }
-    
-    def get_recipients(self, task):
-        """
-        Determine who should receive notifications for a task
-        
-        Args:
-            task: Task details
-            
-        Returns:
-            list: Email addresses to notify
-        """
-        recipients = []
-        
-        # Get the assigned person (if any)
-        assigned_to = task.get('assigned_to')
-        if assigned_to and '@' in assigned_to:
-            recipients.append(assigned_to)
-        
-        # Get the mechanic's supervisor (if applicable)
-        mechanic_id = task.get('mechanic_id')
-        if mechanic_id:
-            try:
-                # This would be your logic to find the supervisor
-                # For example, query a mechanics or employees table
-                result = self.supabase.table('mechanics').select('supervisor_email').eq('id', mechanic_id).execute()
-                if result.data and result.data[0].get('supervisor_email'):
-                    recipients.append(result.data[0]['supervisor_email'])
-            except Exception as e:
-                print(f"NOTIFY: Error finding supervisor: {e}")
-        
-        # Always include the maintenance manager
-        recipients.append('maintenance.manager@company.com')
-        
-        return list(set(recipients))  # Remove duplicates
-    
-    def send_email(self, recipients, subject, body):
-        """
-        Send an email notification
-        
-        Args:
-            recipients: List of email addresses
-            subject: Email subject
-            body: Email body
-            
-        Returns:
-            bool: True if sent successfully, False otherwise
-        """
-        # This would be replaced with your actual email sending code
-        # For example, using SMTP, SendGrid, or another email service
-        print(f"NOTIFY: Sending email to {', '.join(recipients)}")
-        print(f"NOTIFY: Subject: {subject}")
-        print(f"NOTIFY: Body: {body[:100]}...")
-        
-        # Mock successful sending for testing
-        return True
-    
-    def log_notification(self, task_id, evaluation_id, recipients, message, status):
-        """
-        Log a notification in the database
-        
-        Args:
-            task_id: ID of the task
-            evaluation_id: ID of the evaluation
-            recipients: List of recipients
-            message: Message that was sent
-            status: Status of the notification (sent, failed)
-            
-        Returns:
-            dict: Saved notification record or None if failed
-        """
-        if not self.supabase:
-            print("NOTIFY: No database connection available")
-            return None
-            
         try:
-            # Prepare notification record
-            notification_record = {
-                'task_id': task_id,
+            # Get watchlist details if available
+            watchlist = None
+            if watchlist_id:
+                watchlist = self.get_watchlist_details(watchlist_id)
+            
+            # Get evaluation details if available
+            evaluation = None
+            if evaluation_id:
+                evaluation = self.get_evaluation_details(evaluation_id)
+            
+            # Create notification record
+            notification = {
+                'watchlist_id': watchlist_id,
                 'evaluation_id': evaluation_id,
-                'recipient': ', '.join(recipients),
-                'notification_type': 'email',
-                'message': json.dumps(message),
-                'status': status,
-                'sent_at': datetime.now().isoformat() if status == 'sent' else None
+                'recipient': recipient,
+                'action': action,
+                'message': message or self._generate_message(watchlist, evaluation, action),
+                'created_at': datetime.now().isoformat(),
+                'status': 'pending'
             }
             
-            # Insert the record
-            result = self.supabase.table('notification_logs').insert(notification_record).execute()
-            
+            # Save notification
+            result = self.supabase.table('notifications').insert(notification).execute()
             if result.data:
-                print(f"NOTIFY: Logged notification with ID {result.data[0]['id']}")
+                self.logger.info(f"Created notification for watchlist {watchlist_id}")
                 return result.data[0]
             else:
-                print("NOTIFY: Failed to log notification")
+                self.logger.error(f"Failed to create notification for watchlist {watchlist_id}")
                 return None
                 
         except Exception as e:
-            print(f"NOTIFY: Error logging notification: {e}")
+            self.logger.error(f"Error creating notification: {str(e)}")
             return None
     
-    def notify_for_evaluation(self, evaluation_id):
+    def _generate_message(self, watchlist, evaluation, action):
         """
-        Send notification for a specific evaluation
+        Generate a notification message based on the action.
         
         Args:
-            evaluation_id: ID of the evaluation to notify for
+            watchlist: Watchlist item details
+            evaluation: Evaluation details
+            action: Type of notification action
             
         Returns:
-            dict: Result of the notification operation
+            str: Generated message
         """
-        # Get the evaluation
-        evaluation = self.get_evaluation(evaluation_id)
-        if not evaluation:
-            return {'status': 'error', 'message': f"Evaluation {evaluation_id} not found"}
+        if not watchlist:
+            return "Notification for unknown watchlist item"
+            
+        watchlist_title = watchlist.get('title', 'Untitled Watchlist')
+        mechanic_name = watchlist.get('mechanic_name', 'Unknown Mechanic')
         
-        # Get the task
-        task_id = evaluation['task_id']
-        task = self.get_task_details(task_id)
-        if not task:
-            return {'status': 'error', 'message': f"Task {task_id} not found"}
+        if action == 'completed':
+            subject = f"Watchlist Completed: {watchlist_title}"
+            message = f"""
+            The performance monitoring watchlist "{watchlist_title}" for {mechanic_name} has been completed successfully.
+            
+            Performance Summary:
+            - Trend: {evaluation.get('trend', 'Unknown')}
+            - Stability: {evaluation.get('stability', 'Unknown')}
+            - Performance: {evaluation.get('performance', 'Unknown')}
+            
+            Decision: Close watchlist
+            Notes: {evaluation.get('notes', 'No additional notes')}
+            """
+            
+        elif action == 'extended':
+            subject = f"Watchlist Extended: {watchlist_title}"
+            message = f"""
+            The performance monitoring watchlist "{watchlist_title}" for {mechanic_name} has been extended for further monitoring.
+            
+            Performance Summary:
+            - Trend: {evaluation.get('trend', 'Unknown')}
+            - Stability: {evaluation.get('stability', 'Unknown')}
+            - Performance: {evaluation.get('performance', 'Unknown')}
+            
+            Decision: Extend monitoring
+            Notes: {evaluation.get('notes', 'No additional notes')}
+            """
+            
+        elif action == 'review':
+            subject = f"Watchlist Needs Review: {watchlist_title}"
+            message = f"""
+            The performance monitoring watchlist "{watchlist_title}" for {mechanic_name} requires review.
+            
+            Performance Summary:
+            - Trend: {evaluation.get('trend', 'Unknown')}
+            - Stability: {evaluation.get('stability', 'Unknown')}
+            - Performance: {evaluation.get('performance', 'Unknown')}
+            
+            Decision: Needs review
+            Notes: {evaluation.get('notes', 'No additional notes')}
+            """
+            
+        elif action == 'intervene':
+            subject = f"URGENT: Intervention Needed for {watchlist_title}"
+            message = f"""
+            URGENT: The performance monitoring watchlist "{watchlist_title}" for {mechanic_name} requires immediate intervention.
+            
+            Performance Summary:
+            - Trend: {evaluation.get('trend', 'Unknown')}
+            - Stability: {evaluation.get('stability', 'Unknown')}
+            - Performance: {evaluation.get('performance', 'Unknown')}
+            
+            Decision: Immediate intervention required
+            Notes: {evaluation.get('notes', 'No additional notes')}
+            """
+            
+        else:  # update
+            subject = f"Watchlist Update: {watchlist_title}"
+            message = f"""
+            This is an update regarding the performance monitoring watchlist "{watchlist_title}" for {mechanic_name}.
+            
+            Performance Summary:
+            - Trend: {evaluation.get('trend', 'Unknown')}
+            - Stability: {evaluation.get('stability', 'Unknown')}
+            - Performance: {evaluation.get('performance', 'Unknown')}
+            
+            Decision: {evaluation.get('decision', 'Unknown')}
+            Notes: {evaluation.get('notes', 'No additional notes')}
+            """
         
-        # Create the message
-        message = self.create_message(task, evaluation)
-        
-        # Determine recipients
-        recipients = self.get_recipients(task)
-        if not recipients:
-            return {'status': 'error', 'message': "No recipients found"}
-        
-        # Send the notification
-        success = self.send_email(recipients, message['subject'], message['body'])
-        
-        # Log the notification
-        status = 'sent' if success else 'failed'
-        notification = self.log_notification(task_id, evaluation_id, recipients, message, status)
-        
-        return {
-            'task_id': task_id,
-            'evaluation_id': evaluation_id,
-            'status': status,
-            'recipients': recipients,
-            'notification_id': notification['id'] if notification else None
-        }
+        return f"{subject}\n\n{message}"
     
-    def find_and_notify_evaluations(self):
+    def log_notification(self, watchlist_id, evaluation_id, recipients, message, status):
         """
-        Find evaluations that need notifications and send them
+        Log a notification in the database.
+        
+        Args:
+            watchlist_id: ID of the watchlist item
+            evaluation_id: ID of the evaluation
+            recipients: List of notification recipients
+            message: Notification message
+            status: Notification status
+            
+        Returns:
+            dict: Logged notification record
+        """
+        try:
+            notification = {
+                'watchlist_id': watchlist_id,
+                'evaluation_id': evaluation_id,
+                'recipients': recipients,
+                'message': message,
+                'status': status,
+                'created_at': datetime.now().isoformat()
+            }
+            
+            result = self.supabase.table('notification_log').insert(notification).execute()
+            if result.data:
+                self.logger.info(f"Logged notification for watchlist {watchlist_id}")
+                return result.data[0]
+            else:
+                self.logger.error(f"Failed to log notification for watchlist {watchlist_id}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error logging notification: {str(e)}")
+            return None
+    
+    def process_evaluation_notifications(self):
+        """
+        Process notifications for new evaluations.
         
         Returns:
-            list: Results of sending notifications
+            list: List of processed notifications
         """
-        if not self.supabase:
-            print("NOTIFY: No database connection available")
-            return []
-            
         try:
-            # Find evaluations that don't have notifications
+            # Find new evaluations without notifications
             query = """
-            SELECT e.id, e.task_id
-            FROM task_evaluations e
-            LEFT JOIN notification_logs n ON e.id = n.evaluation_id
+            SELECT e.id, e.watchlist_id
+            FROM watchlist_evaluations e
+            LEFT JOIN notifications n ON e.id = n.evaluation_id
             WHERE n.id IS NULL
             """
             
-            result = self.supabase.rpc('find_unnotified_evaluations').execute()
-            
+            result = self.supabase.rpc('find_unevaluated_notifications').execute()
             if not result.data:
-                print("NOTIFY: No unnotified evaluations found")
+                self.logger.info("No new evaluations to notify about")
                 return []
+            
+            notifications = []
+            for evaluation in result.data:
+                watchlist_id = evaluation['watchlist_id']
+                evaluation_id = evaluation['id']
                 
-            print(f"NOTIFY: Found {len(result.data)} unnotified evaluations")
-            
-            # Send notifications for each evaluation
-            results = []
-            for eval_record in result.data:
-                evaluation_id = eval_record['id']
-                notify_result = self.notify_for_evaluation(evaluation_id)
-                results.append(notify_result)
-            
-            # Print summary
-            sent = len([r for r in results if r['status'] == 'sent'])
-            failed = len([r for r in results if r['status'] == 'failed'])
-            print(f"NOTIFY: Sent {sent} notifications, {failed} failed")
-            
-            return results
+                # Get watchlist details
+                watchlist = self.get_watchlist_details(watchlist_id)
+                if not watchlist:
+                    self.logger.warning(f"Watchlist {watchlist_id} not found")
+                    continue
                 
+                # Get evaluation details
+                evaluation = self.get_evaluation_details(evaluation_id)
+                if not evaluation:
+                    self.logger.warning(f"Evaluation {evaluation_id} not found")
+                    continue
+                
+                # Determine recipients
+                recipients = self._get_recipients(watchlist, evaluation)
+                
+                # Create notification
+                notification = self.create_notification(
+                    watchlist_id=watchlist_id,
+                    evaluation_id=evaluation_id,
+                    recipient=recipients[0],  # Primary recipient
+                    action=evaluation.get('decision', 'update'),
+                    message=None  # Will be generated
+                )
+                
+                if notification:
+                    notifications.append(notification)
+            
+            return notifications
+            
         except Exception as e:
-            print(f"NOTIFY: Error finding unnotified evaluations: {e}")
+            self.logger.error(f"Error processing evaluation notifications: {str(e)}")
             return []
+    
+    def _get_recipients(self, watchlist, evaluation):
+        """
+        Determine notification recipients based on watchlist and evaluation.
+        
+        Args:
+            watchlist: Watchlist item details
+            evaluation: Evaluation details
+            
+        Returns:
+            list: List of recipient email addresses
+        """
+        recipients = []
+        
+        # Always include maintenance manager
+        recipients.append("maintenance_manager")
+        
+        # Add mechanic if available
+        mechanic_email = watchlist.get('mechanic_email')
+        if mechanic_email:
+            recipients.append(mechanic_email)
+        
+        # Add supervisor if available
+        supervisor_email = watchlist.get('supervisor_email')
+        if supervisor_email:
+            recipients.append(supervisor_email)
+        
+        return recipients
 
 
 # For testing this module directly

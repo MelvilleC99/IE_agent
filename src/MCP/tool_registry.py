@@ -1,9 +1,16 @@
-# /Users/melville/Documents/Industrial_Engineering_Agent/src/MCP/tool_registry.py
+# /src/MCP/tool_registry.py
 
 import logging
 import inspect
 from typing import Dict, Any, List, Callable, Optional, Union, TYPE_CHECKING
 import json
+import sys
+import os
+
+# Add the project root to the path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 if TYPE_CHECKING:
     from langchain.agents import Tool
@@ -295,122 +302,20 @@ class MCPToolRegistry:
 # Initialize the tool registry
 tool_registry = MCPToolRegistry()
 
-# Import existing tools
-from src.agents.maintenance.maintenance_agent import (
-    get_raw_maintenance_data,
-    get_analysis_summary,
-    get_mechanic_performance,
-    compare_mechanics,
-    get_machine_performance,
-    get_machine_reason_data,
-    run_scheduled_maintenance
-)
-
-# Import Supabase tools
-from src.agents.maintenance.tools.supabase_tool import (
-    query_database,
-    get_schema_info,
-    insert_or_update_data
-)
-
-# Register maintenance tools
-def register_maintenance_tools():
-    """Register maintenance tools with the registry."""
-    
-    # Register existing maintenance tools
-    tool_registry.register_tool(
-        name="get_raw_maintenance_data",
-        function=get_raw_maintenance_data,
-        description="Get raw maintenance data from the JSON file. Use 'sample' for first 5 records.",
-        category="data_retrieval"
-    )
-    
-    tool_registry.register_tool(
-        name="get_analysis_summary",
-        function=get_analysis_summary,
-        description="Get analysis summary data. Use 'all' for entire summary or a specific section name.",
-        category="analysis"
-    )
-    
-    tool_registry.register_tool(
-        name="get_mechanic_performance",
-        function=get_mechanic_performance,
-        description="Get performance data for a specific mechanic. Input should be the mechanic's name.",
-        category="analysis",
-        parameters={
-            "mechanic_name": {
-                "type": "string",
-                "description": "Name of the mechanic to analyze",
-                "required": True
-            }
-        }
-    )
-    
-    tool_registry.register_tool(
-        name="compare_mechanics",
-        function=compare_mechanics,
-        description="Compare all mechanics based on a metric.",
-        category="analysis",
-        parameters={
-            "metric": {
-                "type": "string",
-                "description": "Metric to compare (e.g., 'repair_time', 'response_time')",
-                "required": True
-            }
-        }
-    )
-    
-    tool_registry.register_tool(
-        name="get_machine_performance",
-        function=get_machine_performance,
-        description="Get performance data for a specific machine type.",
-        category="analysis",
-        parameters={
-            "machine_type": {
-                "type": "string",
-                "description": "The type of machine to analyze",
-                "required": True
-            }
-        }
-    )
-    
-    tool_registry.register_tool(
-        name="get_machine_reason_data",
-        function=get_machine_reason_data,
-        description="Get data for machine and reason combinations.",
-        category="analysis",
-        parameters={
-            "combo": {
-                "type": "string",
-                "description": "Machine-reason combination in format 'MachineType_ReasonType'",
-                "required": True
-            }
-        }
-    )
-    
-    tool_registry.register_tool(
-        name="run_scheduled_maintenance",
-        function=run_scheduled_maintenance,
-        description="Run the factory's scheduled maintenance workflow.",
-        category="maintenance",
-        parameters={
-            "action": {
-                "type": "string",
-                "description": "Action to perform ('run', 'check', etc.)",
-                "required": False
-            }
-        }
-    )
-
 # Register Supabase tools
 def register_supabase_tools():
     """Register Supabase tools with the registry."""
+    from src.agents.maintenance.tools.supabase_tool import (
+        query_database,
+        get_schema_info,
+        insert_or_update_data
+    )
     
-    # Register the database query tool
+    # Register the database query tool for complex queries
     tool_registry.register_tool(
         name="query_database",
         function=query_database,
-        description="Query the Supabase database based on provided parameters.",
+        description="Query the Supabase database for complex queries requiring LLM interpretation.",
         category="data_retrieval",
         parameters={
             "query_params": {
@@ -418,17 +323,7 @@ def register_supabase_tools():
                 "description": "Formatted string with query parameters in format: 'table_name:column1,column2;filter1=value1,filter2=value2;limit=100'",
                 "required": True
             }
-        },
-        examples=[
-            {
-                "query_params": "maintenance_records:id,mechanic_name,repair_time",
-                "description": "Get all maintenance records with ID, mechanic name, and repair time"
-            },
-            {
-                "query_params": "mechanics:*;active=true",
-                "description": "Get all fields for active mechanics"
-            }
-        ]
+        }
     )
     
     # Register the schema info tool
@@ -443,17 +338,7 @@ def register_supabase_tools():
                 "description": "Table name or natural language query about database structure",
                 "required": True
             }
-        },
-        examples=[
-            {
-                "query": "maintenance_records",
-                "description": "Get schema for the maintenance_records table"
-            },
-            {
-                "query": "Where are mechanic evaluations stored?",
-                "description": "Natural language query about database structure"
-            }
-        ]
+        }
     )
     
     # Register the data modification tool
@@ -468,24 +353,84 @@ def register_supabase_tools():
                 "description": "Formatted string with operation parameters in format: 'operation|table_name|json_data|match_column'",
                 "required": True
             }
-        },
-        examples=[
-            {
-                "operation_str": "insert|mechanics|{\"name\":\"John Doe\",\"specialty\":\"Electrical\"}",
-                "description": "Insert a new mechanic"
+        }
+    )
+
+# Register maintenance tools
+def register_maintenance_tools():
+    """Register maintenance tools with the registry."""
+    from src.agents.maintenance.tools.scheduled_maintenance_tool import scheduled_maintenance_tool
+    
+    # Register the scheduled maintenance tool
+    tool_registry.register_tool(
+        name="run_scheduled_maintenance",
+        function=scheduled_maintenance_tool,
+        description="Run the factory's scheduled maintenance workflow.",
+        category="maintenance",
+        parameters={
+            "action": {
+                "type": "string",
+                "description": "Action to perform ('run', 'check', etc.)",
+                "required": True
             },
-            {
-                "operation_str": "update|mechanics|{\"id\":5,\"active\":false}|id",
-                "description": "Update mechanic with ID 5 to inactive status"
+            "start_date": {
+                "type": "string",
+                "description": "Start date for maintenance (YYYY-MM-DD)",
+                "required": False
+            },
+            "end_date": {
+                "type": "string",
+                "description": "End date for maintenance (YYYY-MM-DD)",
+                "required": False
+            },
+            "mode": {
+                "type": "string",
+                "description": "Mode of operation ('args' or 'interactive')",
+                "required": False
+            },
+            "use_database": {
+                "type": "boolean",
+                "description": "Whether to use database or file storage",
+                "required": False
             }
-        ]
+        }
+    )
+
+# Register query tools
+def register_query_tools():
+    """Register query tools with the registry."""
+    from MCP.query_manager import QueryManager
+    from src.agents.maintenance.tools.query_tools.watchlist_query import WatchlistQueryTool
+    from src.agents.maintenance.tools.query_tools.scheduled_maintenance_query import ScheduledMaintenanceQueryTool
+    
+    # Create query manager instance
+    query_manager = QueryManager()
+    
+    # Register individual query tools with the manager
+    query_manager.register_query_tool("watchlist", WatchlistQueryTool())
+    query_manager.register_query_tool("scheduled_maintenance", ScheduledMaintenanceQueryTool())
+    
+    # Register the query manager as a single tool
+    tool_registry.register_tool(
+        name="quick_query",
+        function=query_manager.execute_query,
+        description="Execute quick database queries for common requests (maintenance tasks, watchlist items).",
+        category="data_retrieval",
+        parameters={
+            "query": {
+                "type": "string",
+                "description": "Natural language query about maintenance tasks or performance measurements",
+                "required": True
+            }
+        }
     )
 
 # Register all tools
 def register_all_tools():
     """Register all tools with the registry."""
-    register_maintenance_tools()
     register_supabase_tools()
+    register_maintenance_tools()
+    register_query_tools()
     logger.info(f"Registered {len(tool_registry.get_tool_names())} tools")
     
 # Initialize all tools when this module is imported

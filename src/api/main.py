@@ -65,8 +65,10 @@ from agents.maintenance.tools.scheduled_maintenance_tool import scheduled_mainte
 @app.post("/api/agent/scheduled_maintenance")
 async def maintenance_endpoint(payload: Dict[str, Any] = Body(...)):
     action = payload.get("action", "run")
-    records_path = payload.get("records_path")
-    max_tasks = payload.get("max_tasks", 10)
+    start_date = payload.get("start_date")
+    end_date = payload.get("end_date")
+    mode = payload.get("mode", "interactive")
+    use_database = payload.get("use_database", True)
     
     logger.info(f"Running maintenance workflow: action={action}")
     
@@ -74,8 +76,10 @@ async def maintenance_endpoint(payload: Dict[str, Any] = Body(...)):
         # Run the maintenance workflow
         summary = scheduled_maintenance_tool(
             action=action,
-            records_path=records_path,
-            max_tasks=max_tasks
+            start_date=start_date,
+            end_date=end_date,
+            mode=mode,
+            use_database=use_database
         )
         return {"result": summary}
     except Exception as e:

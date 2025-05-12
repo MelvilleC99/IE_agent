@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import sys
 import os
-import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -25,32 +24,37 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import components
-from agents.maintenance.analytics.Mechanic_performance_tool.mechanic_repair_analyzer   import run_mechanic_analysis
+from agents.maintenance.analytics.Mechanic_performance_tool.mechanic_repair_analyzer import run_mechanic_analysis
 from agents.maintenance.analytics.Mechanic_performance_tool.mechanic_repair_interpreter import interpret_analysis_results
-from agents.maintenance.analytics.Mechanic_performance_tool.write_analysis               import AnalysisWriter
-from agents.maintenance.analytics.Mechanic_performance_tool.write_findings               import FindingsWriter
-from agents.maintenance.analytics.Mechanic_performance_tool.write_tasks                  import TaskWriter
-from agents.maintenance.analytics.Mechanic_performance_tool.notification_handler         import NotificationHandler
+from agents.maintenance.analytics.Mechanic_performance_tool.write_analysis import AnalysisWriter
+from agents.maintenance.analytics.Mechanic_performance_tool.write_findings import FindingsWriter
+from agents.maintenance.analytics.Mechanic_performance_tool.write_watchlist import WatchlistWriter
+from agents.maintenance.analytics.Mechanic_performance_tool.notification_handler import NotificationHandler
+from agents.maintenance.tools.date_selector import DateSelector
+from shared_services.db_client import get_connection
 
-
-def run_mechanic_performance_workflow(data_source=None):
+def run_mechanic_performance_workflow(start_date=None, end_date=None):
     """
     Run the complete mechanic performance analysis workflow:
-    1. Analyze mechanic performance data
+    1. Analyze mechanic performance data from database
     2. Write analysis results to database for historical reference
     3. Interpret analysis and identify issues
     4. Write findings to database
-    5. Create tasks from findings
+    5. Create watchlist items from findings
     6. Send notification
     
     Args:
-        data_source: Path to the data source file
+        start_date: Start date for analysis period (optional)
+        end_date: End date for analysis period (optional)
         
     Returns:
         dict: Summary of workflow results
     """
     start_time = datetime.now()
     logger.info("=== Starting Mechanic Performance Analysis Workflow ===")
+    
+    if start_date and end_date:
+        logger.info(f"Analysis period: {start_date} to {end_date}")
     
     results = {
         "workflow_start": start_time.isoformat(),
@@ -60,7 +64,7 @@ def run_mechanic_performance_workflow(data_source=None):
             "write_analysis": {"status": "pending", "details": None},
             "interpretation": {"status": "pending", "details": None},
             "write_findings": {"status": "pending", "details": None},
-            "create_tasks": {"status": "pending", "details": None},
+            "create_watchlist_items": {"status": "pending", "details": None},
             "notification": {"status": "pending", "details": None}
         },
         "workflow_end": None,
@@ -70,12 +74,7 @@ def run_mechanic_performance_workflow(data_source=None):
     try:
         # Step 1: Analyze mechanic performance data
         logger.info("Step 1: Running mechanic performance analysis")
-        if data_source is None:
-            logger.error("No data source provided")
-            results["status"] = "failed"
-            return results
-            
-        analysis_results = run_mechanic_analysis(data_source)
+        analysis_results = run_mechanic_analysis(start_date=start_date, end_date=end_date)
         
         if not analysis_results:
             logger.error("Analysis failed or returned empty results") 
@@ -121,21 +120,21 @@ def run_mechanic_performance_workflow(data_source=None):
         }
         logger.info(f"Saved {len(saved_findings)} findings to database")
         
-        # Step 5: Create tasks from findings
-        logger.info("Step 5: Creating tasks from findings")
-        task_writer = TaskWriter()
-        tasks = task_writer.create_tasks_from_findings()
+        # Step 5: Create watchlist items from findings
+        logger.info("Step 5: Creating watchlist items from findings")
+        watchlist_writer = WatchlistWriter()
+        watchlist_items = watchlist_writer.create_watchlist_items_from_findings()
         
-        results["steps"]["create_tasks"]["status"] = "completed"
-        results["steps"]["create_tasks"]["details"] = {
-            "tasks_created": len(tasks)
+        results["steps"]["create_watchlist_items"]["status"] = "completed"
+        results["steps"]["create_watchlist_items"]["details"] = {
+            "watchlist_items_created": len(watchlist_items)
         }
-        logger.info(f"Created {len(tasks)} tasks from findings")
+        logger.info(f"Created {len(watchlist_items)} watchlist items from findings")
         
         # Step 6: Send notification
         logger.info("Step 6: Sending notification")
         notification_handler = NotificationHandler()
-        notification = notification_handler.create_workflow_completion_notification(len(tasks))
+        notification = notification_handler.create_workflow_completion_notification(len(watchlist_items))
         
         if notification:
             results["steps"]["notification"]["status"] = "completed"
@@ -145,8 +144,11 @@ def run_mechanic_performance_workflow(data_source=None):
             logger.info(f"Created notification {notification.get('id')}")
             
             # Send pending notifications
-            sent_count = notification_handler.send_pending_notifications()
-            logger.info(f"Sent {sent_count} notifications")
+            sent_notifications = notification_handler.send_pending_notifications()
+            logger.info(f"Sent {len(sent_notifications)} notifications")
+            
+            # Add sent notifications to results
+            results["steps"]["notification"]["details"]["notifications_sent"] = len(sent_notifications)
         else:
             results["steps"]["notification"]["status"] = "failed"
             logger.warning("Failed to create notification")
@@ -173,14 +175,22 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Run the mechanic performance analysis workflow")
-    parser.add_argument("--data-source", required=True, help="Path to the maintenance data JSON file")
+    parser.add_argument("--start-date", help="Start date for analysis period (YYYY-MM-DD)")
+    parser.add_argument("--end-date", help="End date for analysis period (YYYY-MM-DD)")
+    parser.add_argument("--mode", choices=["interactive", "args"], default="interactive", 
+                        help="Date selection mode (default: interactive)")
     args = parser.parse_args()
     
-    if not os.path.exists(args.data_source):
-        print(f"Error: Data source file not found at {args.data_source}")
-        sys.exit(1)
+    # Use DateSelector if dates not provided via command line
+    if not (args.start_date and args.end_date):
+        start_date, end_date = DateSelector.get_date_range(mode=args.mode)
+    else:
+        start_date, end_date = args.start_date, args.end_date
     
-    results = run_mechanic_performance_workflow(args.data_source)
+    results = run_mechanic_performance_workflow(
+        start_date=start_date,
+        end_date=end_date
+    )
     
     print("\nWorkflow Summary:")
     print(f"Status: {results['status']}")

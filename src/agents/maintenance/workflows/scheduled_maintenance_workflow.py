@@ -1,283 +1,243 @@
 # src/workflows/scheduled_maintenance_workflow.py
 import os
 import sys
-import json
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
-from dotenv import load_dotenv
+import traceback
+from datetime import datetime
+from typing import Dict, List, Any, Optional
+from pathlib import Path
 
-# Setup logging
+# Ensure src/ directory is on sys.path for absolute imports
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(script_dir, "../../.."))
+src_root = os.path.join(project_root, "src")
+if src_root not in sys.path:
+    sys.path.insert(0, src_root)
+
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("maintenance_workflow.log")
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger("maintenance_workflow")
+logger = logging.getLogger("scheduled_maintenance_workflow")
 
-# Load environment variables
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, '../../../'))
-env_path = os.path.join(project_root, '.env.local')
-logger.info(f"Loading environment from: {env_path}")
-load_dotenv(dotenv_path=env_path)
-
-# Add the src directory to Python's path
-src_dir = os.path.abspath(os.path.join(current_dir, '../'))
-sys.path.insert(0, src_dir)
-
-# Import the required modules
-from agents.maintenance.analytics.MachineCluster import run_analysis
-from agents.maintenance.tracker.scheduled_maintenance.schedule_maintenance import MaintenanceScheduler
-from agents.maintenance.tracker.scheduled_maintenance.scheduled_maintenance_notification import send_maintenance_schedule_notification
-
+# Import modules
+try:
+    # Config
+    from src.config.settings import SUPABASE_URL, SUPABASE_KEY
+    
+    # Machine clustering
+    from agents.maintenance.analytics.Scheduled_Maintenance.MachineCluster import run_analysis
+    from agents.maintenance.analytics.Scheduled_Maintenance.machine_cluster_interpreter import interpret_results
+    
+    # Maintenance scheduling
+    from agents.maintenance.analytics.Scheduled_Maintenance.maintenance_task_scheduler import MaintenanceTaskScheduler
+    from agents.maintenance.analytics.Scheduled_Maintenance.maintenance_task_writer import MaintenanceTaskWriter
+    from agents.maintenance.analytics.Scheduled_Maintenance.maintenance_notifier import MaintenanceNotifier
+    
+    # Database client
+    from src.shared_services.supabase_client import SupabaseClient
+    
+    logger.info("Successfully imported all required modules")
+except ImportError as e:
+    logger.error(f"Import error: {e}")
+    logger.error(traceback.format_exc())
+    sys.exit(1)
 
 class ScheduledMaintenanceWorkflow:
     """
-    Orchestrates the machine maintenance workflow from data analysis to task scheduling.
+    Scheduled Maintenance Workflow for maintenance data.
+    Analyzes machine data to identify maintenance needs and creates scheduled tasks.
     """
     
-    def __init__(
-        self, 
-        cluster_output_path: str = "cluster.json",
-        max_tasks: int = 10
-    ):
-        """
-        Initialize the workflow.
-        
-        Args:
-            cluster_output_path: Path to save the cluster analysis results
-            max_tasks: Maximum number of maintenance tasks to create
-        """
-        self.cluster_output_path = os.path.join(src_dir, cluster_output_path)
-        self.max_tasks = max_tasks
-        self.scheduler = MaintenanceScheduler()
-        logger.info("Maintenance workflow initialized")
-        
-    def run_cluster_analysis(self, maintenance_records: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Run the machine clustering analysis on maintenance records.
-        
-        Args:
-            maintenance_records: List of maintenance record dictionaries
-            
-        Returns:
-            Dict containing cluster analysis results
-        """
-        logger.info(f"Starting cluster analysis with {len(maintenance_records)} records")
-        
+    def __init__(self):
+        """Initialize the scheduled maintenance workflow"""
         try:
-            # Transform the maintenance records to the format expected by the cluster analysis
-            transformed_records = []
-            
-            for record in maintenance_records:
-                # Create a copy of the record to avoid modifying the original
-                transformed_record = record.copy()
+            # Set environment variables from settings
+            if not SUPABASE_URL or not SUPABASE_KEY:
+                raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in settings")
                 
-                # Create the machineData field expected by the cluster analysis
-                transformed_record['machineData'] = {
-                    'type': record.get('machineType', 'Unknown'),
-                    'make': record.get('machineMake', 'Unknown'),
-                    'model': record.get('machineModel', 'Unknown'),
-                    'purchaseDate': record.get('machinePurchaseDate')
-                }
-                
-                # Make sure machineNumber is present
-                if 'machineNumber' not in transformed_record and 'machineNumber' in record:
-                    transformed_record['machineNumber'] = record['machineNumber']
-                
-                # Ensure other required fields are present
-                if 'machineNumber' in transformed_record and 'machineData' in transformed_record:
-                    transformed_records.append(transformed_record)
+            os.environ["SUPABASE_URL"] = SUPABASE_URL
+            os.environ["SUPABASE_KEY"] = SUPABASE_KEY
             
-            logger.info(f"Transformed {len(transformed_records)} records for cluster analysis")
-            
-            if not transformed_records:
-                logger.error("No valid records for analysis after transformation")
-                return {"error": "No valid records after transformation"}
-            
-            # Run the cluster analysis with transformed records
-            analysis_results = run_analysis(transformed_records)
-            
-            if "error" in analysis_results:
-                logger.error(f"Cluster analysis failed: {analysis_results['error']}")
-                return analysis_results
-            
-            # Save results to file for later use
-            with open(self.cluster_output_path, 'w') as f:
-                json.dump(analysis_results, f, indent=2)
-            
-            logger.info(f"Cluster analysis completed and saved to {self.cluster_output_path}")
-            return analysis_results
-            
+            self.db = SupabaseClient()
+            self.scheduler = MaintenanceTaskScheduler(self.db)
+            self.writer = MaintenanceTaskWriter(self.db)
+            self.notifier = MaintenanceNotifier()
+            logger.info("ScheduledMaintenanceWorkflow initialized successfully")
         except Exception as e:
-            import traceback
-            error_traceback = traceback.format_exc()
-            logger.exception(f"Error in cluster analysis: {str(e)}\n{error_traceback}")
-            return {"error": str(e), "traceback": error_traceback}
-    
-    def schedule_maintenance_tasks(self, cluster_results: Optional[Dict] = None) -> Dict[str, Any]:
+            logger.error(f"Error initializing ScheduledMaintenanceWorkflow: {e}")
+            logger.error(traceback.format_exc())
+            raise
+
+    def run(self, period_start: Optional[datetime] = None, period_end: Optional[datetime] = None) -> Dict[str, Any]:
         """
-        Create maintenance tasks based on cluster analysis results.
+        Run the scheduled maintenance workflow:
+        1. Fetch machine data
+        2. Run machine clustering analysis
+        3. Interpret results
+        4. Create maintenance tasks
+        5. Send notifications
         
         Args:
-            cluster_results: Optional cluster analysis results. If None, load from file.
+            period_start: Optional start date for the analysis period
+            period_end: Optional end date for the analysis period
             
-        Returns:
-            Dict containing scheduling results
+        Returns a summary of the workflow execution
         """
+        result_summary = {
+            'analysis_success': False,
+            'tasks_created': 0,
+            'errors': [],
+            'period_start': period_start.isoformat() if isinstance(period_start, datetime) else period_start,
+            'period_end': period_end.isoformat() if isinstance(period_end, datetime) else period_end
+        }
+        
         try:
-            # If results not provided, load from file
-            if cluster_results is None:
-                logger.info(f"Loading cluster results from {self.cluster_output_path}")
-                if not os.path.exists(self.cluster_output_path):
-                    error_msg = f"Cluster results file not found: {self.cluster_output_path}"
-                    logger.error(error_msg)
-                    return {"error": error_msg}
+            # Log analysis period if provided
+            if period_start and period_end:
+                logger.info(f"Analysis period: {period_start} to {period_end}")
+            
+            # --- Step 1: Fetch machine data ---
+            logger.info("Fetching machine data...")
+            
+            # Create filters based on date range
+            filters = {}
+            if period_start and period_end:
+                # Convert datetime objects to strings if needed
+                start_date_str = period_start.isoformat() if isinstance(period_start, datetime) else period_start
+                end_date_str = period_end.isoformat() if isinstance(period_end, datetime) else period_end
                 
-                with open(self.cluster_output_path, 'r') as f:
-                    cluster_results = json.load(f)
-            
-            # Check if cluster tables exist in database
-            tables_exist = self.scheduler.ensure_tables_exist()
-            if not tables_exist:
-                error_msg = "Required tables don't exist in the database"
-                logger.error(error_msg)
-                return {"error": error_msg}
-            
-            # Generate maintenance schedule
-            logger.info("Generating service schedule from cluster results")
-            scheduling_results = self.scheduler.generate_service_schedule_from_cluster(
-                cluster_file=self.cluster_output_path,
-                max_tasks=self.max_tasks
+                # Use the correct filter format for date ranges
+                filters['resolved_at.gte'] = start_date_str
+                filters['resolved_at.lte'] = end_date_str
+                
+                logger.info(f"Filtering records by date range: {start_date_str} to {end_date_str}")
+            elif period_start:
+                start_date_str = period_start.isoformat() if isinstance(period_start, datetime) else period_start
+                filters['resolved_at.gte'] = start_date_str
+                logger.info(f"Filtering records from {start_date_str} onwards")
+            elif period_end:
+                end_date_str = period_end.isoformat() if isinstance(period_end, datetime) else period_end
+                filters['resolved_at.lte'] = end_date_str
+                logger.info(f"Filtering records up to {end_date_str}")
+
+            # Query the database with filters
+            records = self.db.query_table(
+                table_name="downtime_detail",
+                columns="*",
+                filters=filters,
+                limit=1000
             )
             
-            logger.info(f"Created {scheduling_results['tasks_created']} tasks, " 
-                        f"skipped {len(scheduling_results['skipped'])} machines")
-            
-            # Send notification about scheduled maintenance tasks
-            if scheduling_results.get('tasks_created', 0) > 0:
-                logger.info("Sending maintenance schedule notification")
-                notification_result = send_maintenance_schedule_notification(scheduling_results)
-                scheduling_results['notification'] = notification_result
-            else:
-                logger.info("No tasks created, skipping notification")
+            if not records:
+                msg = "No machine records found in database for the specified period"
+                logger.warning(msg)
+                result_summary['errors'].append(msg)
+                return result_summary
                 
-            return scheduling_results
+            logger.info(f"Retrieved {len(records)} machine records")
+            
+            # --- Step 2: Run machine clustering analysis ---
+            logger.info("Running machine clustering analysis...")
+            analysis_results = run_analysis(records)
+            
+            if not analysis_results:
+                msg = "No results from machine clustering analysis"
+                logger.warning(msg)
+                result_summary['errors'].append(msg)
+                return result_summary
+            
+            result_summary['analysis_success'] = True
+            
+            # --- Step 3: Interpret results ---
+            logger.info("Interpreting clustering results...")
+            machines_to_service = interpret_results(analysis_results)
+            
+            if not machines_to_service:
+                logger.info("No machines identified for maintenance")
+                return result_summary
+            
+            # --- Step 4: Create maintenance tasks ---
+            logger.info("Creating maintenance tasks...")
+            schedule_results = self.scheduler.schedule_maintenance_tasks(machines_to_service)
+            write_results = self.writer.write_maintenance_tasks(schedule_results, self.scheduler)
+            
+            result_summary['tasks_created'] = write_results.get('tasks_created', 0)
+            
+            # --- Step 5: Send notifications ---
+            if result_summary['tasks_created'] > 0:
+                logger.info("Sending maintenance notifications...")
+                self.notifier.send_notifications(machines_to_service)
+            
+            return result_summary
             
         except Exception as e:
-            import traceback
-            error_traceback = traceback.format_exc()
-            logger.exception(f"Error in scheduling maintenance tasks: {str(e)}\n{error_traceback}")
-            return {"error": str(e), "traceback": error_traceback}
-    
-    def get_current_schedule(self, status: str = "open") -> List[Dict[str, Any]]:
-        """
-        Get the current maintenance schedule.
-        
-        Args:
-            status: Filter tasks by status (open, completed, etc.)
-            
-        Returns:
-            List of maintenance tasks
-        """
-        try:
-            tasks = self.scheduler.get_service_schedule(status=status)
-            logger.info(f"Retrieved {len(tasks)} {status} tasks from schedule")
-            return tasks
-        except Exception as e:
-            logger.exception("Error retrieving maintenance schedule")
-            return []
-    
-    def run_complete_workflow(self, maintenance_records: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Run the complete workflow from analysis to scheduling.
-        
-        Args:
-            maintenance_records: List of maintenance record dictionaries
-            
-        Returns:
-            Dict containing the workflow results
-        """
-        logger.info("Starting complete maintenance workflow")
-        
-        # Step 1: Run cluster analysis
-        analysis_results = self.run_cluster_analysis(maintenance_records)
-        if "error" in analysis_results:
-            return {"status": "failed", "step": "analysis", "error": analysis_results["error"]}
-        
-        # Step 2: Schedule maintenance tasks
-        scheduling_results = self.schedule_maintenance_tasks(analysis_results)
-        if "error" in scheduling_results:
-            return {"status": "failed", "step": "scheduling", "error": scheduling_results["error"]}
-        
-        # Step 3: Get current schedule for reporting
-        current_schedule = self.get_current_schedule()
-        
-        # Return complete workflow results
-        return {
-            "status": "success",
-            "analysis_results": analysis_results,
-            "scheduling_results": scheduling_results,
-            "current_schedule": current_schedule,
-            "notification": scheduling_results.get('notification', {})  # Include notification info
-        }
+            error_msg = f"Error in workflow execution: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            result_summary['errors'].append(error_msg)
+            return result_summary
 
 
-# Example usage
-if __name__ == "__main__":
+def main():
+    """Main entry point for running the scheduled maintenance workflow from command line"""
+    logger.info("Starting Scheduled Maintenance Workflow")
+    
+    import argparse
+    parser = argparse.ArgumentParser(description="Run Scheduled Maintenance Workflow")
+    parser.add_argument("--start_date", type=str, help="Start date for analysis (YYYY-MM-DD)")
+    parser.add_argument("--end_date", type=str, help="End date for analysis (YYYY-MM-DD)")
+    parser.add_argument("--mode", choices=["interactive", "args"], default="interactive", 
+                        help="Date selection mode (default: interactive)")
+    args = parser.parse_args()
+    
     try:
-        # Create workflow instance
-        workflow = ScheduledMaintenanceWorkflow(
-            cluster_output_path="cluster.json", 
-            max_tasks=10
+        # Use DateSelector for date range selection
+        from agents.maintenance.tools.date_selector import DateSelector
+        
+        if args.start_date and args.end_date:
+            # Use provided dates from command line
+            period_start = datetime.strptime(args.start_date, "%Y-%m-%d")
+            period_end = datetime.strptime(args.end_date, "%Y-%m-%d")
+            logger.info(f"Using specified date range: {period_start.date()} to {period_end.date()}")
+        else:
+            # Use DateSelector for interactive selection
+            start_date_str, end_date_str = DateSelector.get_date_range(mode=args.mode)
+            period_start = datetime.strptime(start_date_str, "%Y-%m-%d")
+            period_end = datetime.strptime(end_date_str, "%Y-%m-%d")
+            logger.info(f"Selected date range: {period_start.date()} to {period_end.date()}")
+        
+        # For the end date, set it to the end of day (23:59:59) to include all records from that day
+        period_end = period_end.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        # Initialize and run workflow
+        wf = ScheduledMaintenanceWorkflow()
+        result = wf.run(
+            period_start=period_start,
+            period_end=period_end
         )
         
-        # Use RAW_DATA_PATH from environment
-        raw_data_path = os.getenv('RAW_DATA_PATH')
-        if raw_data_path and os.path.exists(raw_data_path):
-            logger.info(f"Loading maintenance records from RAW_DATA_PATH: {raw_data_path}")
-            with open(raw_data_path, 'r') as f:
-                maintenance_records = json.load(f)
-                
-            # Run the complete workflow
-            results = workflow.run_complete_workflow(maintenance_records)
-            
-            if results["status"] == "success":
-                logger.info("Workflow completed successfully")
-                print("\nWorkflow Summary:")
-                print(f"- Analyzed {len(maintenance_records)} maintenance records")
-                print(f"- Identified {results['scheduling_results']['total_problematic_machines']} problematic machines")
-                print(f"- Created {results['scheduling_results']['tasks_created']} maintenance tasks")
-                print(f"- Current schedule has {len(results['current_schedule'])} open tasks")
-                
-                # Print notification status if available
-                if 'notification' in results:
-                    notification = results['notification']
-                    notification_status = notification.get('status', 'unknown')
-                    print(f"- Notification status: {notification_status}")
-                
-                # Print detailed task information
-                if results['scheduling_results']['created']:
-                    print("\nNew Tasks Created:")
-                    for task in results['scheduling_results']['created']:
-                        machine_id = task.get('machine_id', '')
-                        machine_type = task.get('machine_type', 'Unknown')
-                        priority = task.get('priority', 'medium')
-                        assignee = task.get('mechanic_name', task.get('assignee', 'Unassigned'))
-                        print(f"- {priority.upper()} Priority: {machine_type} (#{machine_id}) assigned to {assignee}")
-            else:
-                logger.error(f"Workflow failed at {results['step']} step: {results['error']}")
-                print(f"\nWorkflow failed: {results['error']}")
-        else:
-            logger.warning(f"No maintenance records file found at {raw_data_path or 'RAW_DATA_PATH not set'}")
-            print(f"Please ensure RAW_DATA_PATH is set correctly in .env.local and the file exists")
-            
+        # Print summary
+        print("\n=== Scheduled Maintenance Workflow Summary ===")
+        print(f"Analysis period: {period_start.strftime('%Y-%m-%d')} to {period_end.strftime('%Y-%m-%d')}")
+        print(f"Analysis status: {'Success' if result.get('analysis_success') else 'Failed'}")
+        print(f"Tasks created: {result.get('tasks_created', 0)}")
+        
+        if result.get('errors'):
+            print("\nErrors encountered:")
+            for error in result['errors']:
+                print(f"- {error}")
+        
+        print("\nWorkflow execution complete.")
+        return result
+        
     except Exception as e:
-        import traceback
-        error_traceback = traceback.format_exc()
-        logger.exception(f"Unhandled error in workflow execution: {str(e)}\n{error_traceback}")
-        print(f"Error: {str(e)}")
+        logger.error(f"Unhandled exception in main workflow: {e}")
+        logger.error(traceback.format_exc())
+        print(f"\nError running workflow: {e}")
+        return {'status': 'failed', 'error': str(e)}
+
+
+if __name__ == '__main__':
+    main()
