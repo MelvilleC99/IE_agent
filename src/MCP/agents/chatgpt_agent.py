@@ -53,13 +53,27 @@ class ChatGPTAgent:
             
         self.model = "gpt-4o-mini"  # Using the specified model
         
+        # Cache the current date at initialization
+        self.current_date = self._get_current_date()
+        
         # Load prompts with correct path
         self.system_prompt = self._load_system_prompt()
         
-        logger.info(f"ChatGPT Agent initialized with model {self.model}")
+        logger.info(f"ChatGPT Agent initialized with model {self.model} and current date: {self.current_date['formatted_date']}")
+    
+    def _get_current_date(self) -> Dict[str, str]:
+        """Get the current date in multiple formats."""
+        now = datetime.now()
+        return {
+            "current_date": now.strftime("%Y-%m-%d"),
+            "current_datetime": now.isoformat(),
+            "formatted_date": now.strftime("%B %d, %Y"),
+            "day_of_week": now.strftime("%A"),
+            "time": now.strftime("%H:%M:%S")
+        }
     
     def _load_system_prompt(self) -> str:
-        """Load the system prompt from the correct location."""
+        """Load the system prompt without any hardcoded dates."""
         try:
             # Try loading from the maintenance prompts directory
             prompt_path = "/Users/melville/Documents/Industrial_Engineering_Agent/src/agents/maintenance/prompts/system_prompt.txt"
@@ -67,29 +81,37 @@ class ChatGPTAgent:
             if os.path.exists(prompt_path):
                 with open(prompt_path, 'r') as f:
                     prompt = f.read().strip()
-                    logger.info(f"Loaded system prompt from {prompt_path}")
-                    return prompt
+                
+                # Remove any hardcoded dates or date references
+                # Don't add the current date here - we'll inject it as a message
+                logger.info(f"Loaded system prompt from {prompt_path}")
+                return prompt
             else:
                 logger.warning(f"System prompt file not found at {prompt_path}")
                 
         except Exception as e:
             logger.error(f"Error loading system prompt: {e}")
         
-        # Fallback to enhanced minimal prompt
+        # Fallback to enhanced minimal prompt without dates
         logger.info("Using fallback enhanced system prompt")
-        return """You are a maintenance management assistant. Your goal is to help users with:
+        return """You are a maintenance management assistant. 
+
+Your goal is to help users with:
 1. Scheduling and tracking maintenance tasks
 2. Querying maintenance data
 3. Analyzing performance metrics
 
 When answering questions:
+- ALWAYS use the current date provided by the get_current_date function result
+- The current date is provided at the start of each conversation
+- Use this date for all calculations and comparisons
+- Never guess or use a date from training data
 - Consider the context of previous messages
-- For follow-up questions, analyze the previous response to understand what the user is referring to
-- Think about whether you need to query the database or can answer from context
+- For follow-up questions, analyze the previous response
 - Be specific and helpful in your responses
-- When maintenance tasks are past due, calculate and mention by how many days
+- When maintenance tasks are past due, calculate overdue days based on the current date
 
-For complex analysis or when you need to examine trends, indicate that deeper investigation is needed."""
+For complex analysis, indicate that deeper investigation is needed."""
     
     def define_functions(self) -> List[Dict[str, Any]]:
         """
@@ -100,16 +122,16 @@ For complex analysis or when you need to examine trends, indicate that deeper in
         """
         functions = []
         
-        # Quick query function (new)
+        # Quick query function
         functions.append({
             "name": "quick_query",
-            "description": "Execute quick database queries for common requests",
+            "description": "Execute database queries for maintenance tasks, watchlist items, and performance data",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Natural language query about maintenance tasks or performance measurements"
+                        "description": "Natural language query about maintenance tasks, mechanics, or performance measurements"
                     }
                 },
                 "required": ["query"]
@@ -163,6 +185,10 @@ For complex analysis or when you need to examine trends, indicate that deeper in
         Returns:
             Response dictionary with answer and metadata
         """
+        # Always refresh the current date for each query
+        self.current_date = self._get_current_date()
+        logger.info(f"Processing query with current date: {self.current_date['formatted_date']}")
+        
         try:
             # First check if this might be a follow-up question
             is_follow_up = self._is_follow_up_query(query, conversation_history)
@@ -172,36 +198,34 @@ For complex analysis or when you need to examine trends, indicate that deeper in
                 {"role": "system", "content": self.system_prompt}
             ]
             
-            # Add only recent conversation history (last 3 exchanges)
+            # ALWAYS inject the current date as a function message right after system prompt
+            date_message = {
+                "role": "function",
+                "name": "get_current_date",
+                "content": json.dumps(self.current_date)
+            }
+            messages.append(date_message)  # type: ignore
+            logger.debug(f"Injected date message: {date_message['content']}")
+            
+            # Add a brief assistant acknowledgment of the date
+            messages.append({
+                "role": "assistant",
+                "content": f"I understand that today is {self.current_date['formatted_date']} ({self.current_date['day_of_week']}). I'll use this date for all calculations."
+            })
+            
+            def build_message(role: str, content: str) -> ChatCompletionMessageParam:
+                return {"role": role, "content": content}  # type: ignore
+
             if conversation_history:
                 recent_history = conversation_history[-6:]  # Last 3 user-assistant pairs
                 for msg in recent_history:
                     role = msg["role"]
                     content = msg["content"]
-                    if role in ["user", "assistant"]:
-                        messages.append({
-                            "role": role,  # type: ignore
-                            "content": content
-                        })
+                    if role in ["user", "assistant", "system", "function"] and content is not None:
+                        messages.append(build_message(role, str(content)))
             
-            # Add the current query with context hint if it's a follow-up
-            if is_follow_up and conversation_history:
-                # Extract relevant context from the last assistant message
-                last_assistant_msg = None
-                for msg in reversed(conversation_history):
-                    if msg["role"] == "assistant":
-                        last_assistant_msg = msg["content"]
-                        break
-                
-                if last_assistant_msg:
-                    messages.append({
-                        "role": "user", 
-                        "content": f"{query}\n\n(Context: The previous response listed maintenance tasks with their due dates.)"
-                    })
-                else:
-                    messages.append({"role": "user", "content": query})
-            else:
-                messages.append({"role": "user", "content": query})
+            # Add the current query
+            messages.append(build_message("user", query))
             
             # Get function definitions
             functions = self.define_functions()
@@ -212,55 +236,45 @@ For complex analysis or when you need to examine trends, indicate that deeper in
             estimated_tokens = len(message_text) // 4
             logger.info(f"Estimated input tokens: {estimated_tokens}")
             
-            # First try without functions for follow-up questions
-            if is_follow_up:
-                # Try to answer directly without function calling
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    max_tokens=500
-                )
-                
-                # Track token usage
-                token_tracker.track_openai_usage(response)
-                
-                message = response.choices[0].message
-                
-                # If the response seems like it needs a function, then call with functions
-                if message.content and self._needs_function_call(message.content):
-                    response = self.client.chat.completions.create(
-                        model=self.model,
-                        messages=messages,
-                        functions=functions,  # type: ignore
-                        function_call="auto",
-                        max_tokens=500
-                    )
-                    message = response.choices[0].message
-            else:
-                # Regular query - try with functions
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    functions=functions,  # type: ignore
-                    function_call="auto",
-                    max_tokens=500
-                )
-                message = response.choices[0].message
+            # Always try with functions available
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                functions=functions,  # type: ignore
+                function_call="auto",
+                max_tokens=500
+            )
+            
+            # Track token usage
+            token_tracker.track_openai_usage(response)
+            
+            message = response.choices[0].message
             
             # Handle function calls
             if message.function_call:
                 function_name = message.function_call.name
                 function_args = json.loads(message.function_call.arguments)
                 
-                logger.info(f"Executing function: {function_name}")
+                logger.info(f"Executing function: {function_name} with args: {function_args}")
                 
                 # Execute the function
                 result = self._execute_function(function_name, function_args)
                 
+                # Log the result
+                logger.info(f"Function {function_name} result: {json.dumps(result)[:200]}...")
+                
+                # Check if the function failed
+                if isinstance(result, dict) and "error" in result:
+                    # If function failed, return a helpful message
+                    return {
+                        "answer": f"I encountered an error while trying to {function_name}: {result['error']}. Let me try to help you another way.",
+                        "response": response
+                    }
+                
                 # Format the result using the response formatter
                 formatted_result = self.response_formatter.format_tool_result(result, function_name)
                 
-                # Add function result to messages (minimal) - fixed type issue
+                # Add function result to messages
                 messages.append({
                     "role": "assistant",
                     "function_call": {
@@ -278,7 +292,7 @@ For complex analysis or when you need to examine trends, indicate that deeper in
                 # Get final response with minimal context
                 final_response = self.client.chat.completions.create(
                     model=self.model,
-                    messages=messages[-4:],  # Only send recent messages
+                    messages=messages[-6:],  # Only send recent messages
                     functions=functions,  # type: ignore
                     function_call="none",  # Force it to respond without calling another function
                     max_tokens=500
@@ -313,6 +327,11 @@ For complex analysis or when you need to examine trends, indicate that deeper in
                 "error": str(e),
                 "answer": f"I apologize, but I encountered an error while processing your query: {str(e)}"
             }
+    
+    def refresh_date(self):
+        """Refresh the cached date - useful for long-running sessions that span midnight."""
+        self.current_date = self._get_current_date()
+        logger.info(f"Refreshed current date to: {self.current_date['formatted_date']}")
     
     def _is_follow_up_query(self, query: str, conversation_history: Optional[List[Dict[str, str]]]) -> bool:
         """Check if this query is likely a follow-up to a previous response."""
@@ -387,7 +406,7 @@ For complex analysis or when you need to examine trends, indicate that deeper in
     
     def _execute_function(self, function_name: str, function_args: Dict[str, Any]) -> Any:
         """
-        Execute a function call.
+        Execute a function call with better error handling.
         
         Args:
             function_name: Name of the function to call
@@ -397,28 +416,38 @@ For complex analysis or when you need to examine trends, indicate that deeper in
             Result of the function call
         """
         try:
+            logger.info(f"Executing {function_name} with args: {json.dumps(function_args)}")
+            
             if function_name == "quick_query":
-                # Execute quick query through the tool registry
+                # Extract the query string from function_args
+                query_string = function_args.get("query", "")
+                logger.info(f"Quick query string: {query_string}")
+                
                 if self.tool_registry:
-                    result = self.tool_registry.execute_tool("quick_query", function_args)
+                    # The query parameter should be passed as "query" not inside another dict
+                    result = self.tool_registry.execute_tool("quick_query", {"query": query_string})
+                    logger.info(f"Quick query execution result: {json.dumps(result)[:200]}...")
                     return result
                 else:
+                    logger.error("Tool registry not available for quick_query")
                     return {"error": "Tool registry not available"}
                     
             elif function_name == "run_scheduled_maintenance":
-                # Execute scheduled maintenance
                 if self.tool_registry:
                     result = self.tool_registry.execute_tool("run_scheduled_maintenance", function_args)
+                    logger.info(f"Scheduled maintenance result: {json.dumps(result)[:200]}...")
                     return result
                 else:
+                    logger.error("Tool registry not available for run_scheduled_maintenance")
                     return {"error": "Tool registry not available"}
                     
             elif function_name == "query_database":
-                # Execute complex database query
                 if self.tool_registry:
                     result = self.tool_registry.execute_tool("query_database", function_args)
+                    logger.info(f"Database query result: {json.dumps(result)[:200]}...")
                     return result
                 else:
+                    logger.error("Tool registry not available for query_database")
                     return {"error": "Tool registry not available"}
                     
             else:
@@ -426,5 +455,5 @@ For complex analysis or when you need to examine trends, indicate that deeper in
                 return {"error": f"Unknown function '{function_name}'"}
                 
         except Exception as e:
-            logger.error(f"Error executing function {function_name}: {e}")
+            logger.error(f"Error executing function {function_name}: {e}", exc_info=True)
             return {"error": f"Error executing {function_name}: {str(e)}"}

@@ -21,12 +21,14 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
     logger.info(f"Added {project_root} to Python path")
 
-# Import the TwoTierOrchestrator
+# Import the TwoTierOrchestrator and tool registry
 from MCP.two_tier_orchestrator import TwoTierOrchestrator
 from MCP.token_tracker import token_tracker
+from MCP.tool_registry import tool_registry
 
-# Initialize the orchestrator
-two_tier_orchestrator = TwoTierOrchestrator()
+# Initialize the orchestrator with the tool registry
+two_tier_orchestrator = TwoTierOrchestrator(tool_registry=tool_registry)
+logger.info("Initialized TwoTierOrchestrator with tool_registry")
 
 @router.post("/agent/chat")
 def chat(payload: Dict[str, Any] = Body(...)):
@@ -77,4 +79,18 @@ def reset_token_usage():
         return {"status": "Token usage statistics reset successfully"}
     except Exception as e:
         logger.error(f"Error resetting token usage: {e}")
+        return {"error": str(e)}
+
+@router.get("/debug/tools")
+def debug_tools():
+    """Debug endpoint to check available tools."""
+    try:
+        available_tools = tool_registry.get_all_tools()
+        return {
+            "tool_count": len(available_tools),
+            "tools": available_tools,
+            "chatgpt_has_registry": hasattr(two_tier_orchestrator.chatgpt_agent, 'tool_registry') and two_tier_orchestrator.chatgpt_agent.tool_registry is not None
+        }
+    except Exception as e:
+        logger.error(f"Error getting tools: {e}")
         return {"error": str(e)}

@@ -189,6 +189,49 @@ class DateUtils:
         else:
             hours = total_seconds / 3600
             return f"{hours:.1f} hours"
+    
+    @staticmethod
+    def is_past_due(due_date_str: str, reference_date: Optional[datetime] = None) -> bool:
+        """
+        Check if a date is past due compared to a reference date.
+        
+        Args:
+            due_date_str: Due date string
+            reference_date: Reference date to compare against (default: today)
+            
+        Returns:
+            True if past due, False otherwise
+        """
+        if reference_date is None:
+            reference_date = DateUtils.get_today()
+            
+        due_date = DateUtils.parse_date_input(due_date_str)
+        if due_date is None:
+            return False
+            
+        return due_date < reference_date
+    
+    @staticmethod
+    def days_until_due(due_date_str: str, reference_date: Optional[datetime] = None) -> Optional[int]:
+        """
+        Calculate days until a due date.
+        
+        Args:
+            due_date_str: Due date string
+            reference_date: Reference date to calculate from (default: today)
+            
+        Returns:
+            Number of days until due (negative if past due)
+        """
+        if reference_date is None:
+            reference_date = DateUtils.get_today()
+            
+        due_date = DateUtils.parse_date_input(due_date_str)
+        if due_date is None:
+            return None
+            
+        delta = due_date - reference_date
+        return delta.days
 
 # Create a global instance for easy access
 date_utils = DateUtils()
