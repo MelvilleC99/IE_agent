@@ -1,8 +1,8 @@
 import sys
 import os
 
-# Determine the path to the src directory by going one level up from shared_services
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# Determine the path to the project root by going three levels up from shared_services
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -15,7 +15,7 @@ from firebase_admin import credentials, firestore
 # Only initialize once
 if not firebase_admin._apps:
     # Define the exact path to your credentials
-    cred_path = os.path.join(os.path.dirname(project_root), "secrets/firebase-service-account.json")
+    cred_path = os.path.join(project_root, "secrets/firebase-service-account.json")
     
     # Check if the file exists
     if not os.path.exists(cred_path):

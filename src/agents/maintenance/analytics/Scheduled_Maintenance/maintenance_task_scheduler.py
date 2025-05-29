@@ -17,8 +17,12 @@ class MaintenanceTaskScheduler:
         """Get all mechanics."""
         try:
             logger.info("Attempting to fetch mechanics from database...")
-            result = self.db.table('mechanics').select('*').execute()
-            mechanics = result.data if result and hasattr(result, 'data') else []
+            result = self.db.query_table(
+                table_name='mechanics',
+                columns='*',
+                limit=100
+            )
+            mechanics = result if result else []
             logger.info(f"Retrieved {len(mechanics)} mechanics")
             return mechanics
         except Exception as e:
@@ -39,11 +43,16 @@ class MaintenanceTaskScheduler:
             # Get current workload for each mechanic
             for mechanic in mechanics:
                 try:
-                    tasks_result = self.db.table('scheduled_maintenance') \
-                        .select('*') \
-                        .eq('status', 'open') \
-                        .eq('assignee', mechanic.get("employee_number")).execute()
-                    open_tasks = tasks_result.data if tasks_result and hasattr(tasks_result, 'data') else []
+                    tasks_result = self.db.query_table(
+                        table_name='scheduled_maintenance',
+                        columns='*',
+                        filters={
+                            'status': 'open',
+                            'assignee': mechanic.get("employee_number")
+                        },
+                        limit=100
+                    )
+                    open_tasks = tasks_result if tasks_result else []
                 except Exception as e:
                     logger.error(f"Error getting tasks for mechanic {mechanic.get('employee_number')}: {e}")
                     open_tasks = []

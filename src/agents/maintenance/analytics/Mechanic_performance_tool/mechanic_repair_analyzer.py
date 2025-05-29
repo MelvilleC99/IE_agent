@@ -325,7 +325,7 @@ def run_mechanic_analysis(start_date=None, end_date=None) -> dict:
     """
     try:
         # Get database connection
-        from shared_services.db_client import get_connection
+        from shared_services.db_client import get_connection # type: ignore
         supabase = get_connection()
         
         if not supabase:

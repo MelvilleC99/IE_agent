@@ -3,11 +3,12 @@
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
+import uuid
 
 logger = logging.getLogger("maintenance_writer")
 
 class MaintenanceTaskWriter:
-    """Writes maintenance tasks to the database."""
+    """Writes maintenance tasks to the database with duplicate prevention."""
     
     def __init__(self, db_client):
         """Initialize with database client."""
@@ -16,9 +17,9 @@ class MaintenanceTaskWriter:
     def ensure_tables_exist(self) -> bool:
         """Check if the required tables exist."""
         try:
-            result1 = self.db.table('scheduled_maintenance').select('count').limit(1).execute()
+            result1 = self.db.query_table('scheduled_maintenance', columns='count', limit=1)
             logger.info(f"scheduled_maintenance table exists, got result: {result1}")
-            result2 = self.db.table('mechanics').select('count').limit(1).execute()
+            result2 = self.db.query_table('mechanics', columns='count', limit=1)
             logger.info(f"mechanics table exists, got result: {result2}")
             return True
         except Exception as e:
@@ -26,19 +27,57 @@ class MaintenanceTaskWriter:
             logger.error("Tables may not exist or there's an issue with permissions.")
             return False
             
-    def check_existing_tasks(self, machine_id: str) -> bool:
-        """Check if machine already has open maintenance tasks."""
+    def check_existing_tasks(self, machine_id: str, include_completed: bool = False) -> Dict[str, Any]:
+        """
+        Enhanced check for existing maintenance tasks.
+        
+        Returns:
+            Dict with 'has_open_tasks', 'open_count', 'last_completed', etc.
+        """
         try:
-            result = self.db.table('scheduled_maintenance') \
-                .select('*') \
-                .eq('status', 'open') \
-                .eq('machine_id', machine_id) \
-                .execute()
-            tasks = result.data if result and hasattr(result, 'data') else []
-            return len(tasks) > 0
+            # Check for open tasks
+            open_result = self.db.query_table(
+                'scheduled_maintenance',
+                columns='*',
+                filters={'machine_id': machine_id, 'status': 'open'},
+                limit=100
+            )
+            open_tasks = open_result if open_result else []
+            
+            result = {
+                'has_open_tasks': len(open_tasks) > 0,
+                'open_count': len(open_tasks),
+                'open_tasks': open_tasks
+            }
+            
+            # Optionally check completed tasks for scheduling intelligence
+            if include_completed:
+                completed_result = self.db.query_table(
+                    'scheduled_maintenance',
+                    columns='*',
+                    filters={'machine_id': machine_id, 'status': 'completed'},
+                    limit=1
+                )
+                if completed_result:
+                    last_completed = completed_result[0]
+                    result['last_completed'] = last_completed
+                    result['days_since_last_maintenance'] = self._days_since(last_completed.get('completed_at'))
+            
+            return result
+            
         except Exception as e:
-            logger.error(f"Error checking existing tasks: {e}")
-            return False
+            logger.error(f"Error checking existing tasks for machine {machine_id}: {e}")
+            return {'has_open_tasks': False, 'open_count': 0}
+    
+    def _days_since(self, date_str: str) -> int:
+        """Calculate days since a date string."""
+        try:
+            if date_str:
+                date_obj = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                return (datetime.now() - date_obj).days
+        except:
+            pass
+        return 999  # Large number if can't parse
             
     def write_maintenance_task(
         self,
@@ -76,6 +115,7 @@ class MaintenanceTaskWriter:
         
         # Build task record with extra fields
         task = {
+            "id": str(uuid.uuid4()),
             "machine_id": machine_id,
             "machine_type": machine_type,
             "issue_type": issue_type,
@@ -90,82 +130,124 @@ class MaintenanceTaskWriter:
         
         logger.info(f"Creating task for machine {machine_id} (type: {machine_type}) assigned to {assignee_name} ({assignee})...")
         try:
-            result = self.db.table('scheduled_maintenance').insert(task).execute()
+            result = self.db.insert_data('scheduled_maintenance', task)
             logger.info("Task inserted successfully")
-            return result.data[0] if result and hasattr(result, 'data') and result.data else task
+            return result if result else task
         except Exception as e:
             logger.error(f"Error inserting task: {e}")
             logger.error(f"Could not insert task for machine {machine_id}")
             return None
-            
+
     def write_maintenance_tasks(self, schedule_results, scheduler) -> Dict[str, Any]:
         """
-        Write all scheduled maintenance tasks to the database.
-        
-        Args:
-            schedule_results: Output from the scheduler
-            scheduler: MaintenanceTaskScheduler instance for mechanic assignment
-            
-        Returns:
-            Dict with write results
+        Enhanced task writing with duplicate prevention and detailed logging.
         """
         machines = schedule_results.get('machines_to_service', [])
+        logger.info(f"TASK WRITER: Processing {len(machines)} machines for maintenance scheduling")
         
-        # Check if tables exist
+        # Detailed logging of what we received
+        for i, machine in enumerate(machines[:3]):
+            logger.info(f"TASK WRITER: Machine {i+1} sample: {machine}")
+        
         if not self.ensure_tables_exist():
             return {
                 "error": "Required tables don't exist in the database",
                 "tasks_created": 0
             }
-            
+        
         tasks_created = []
         skipped_machines = []
+        duplicate_machines = []
+        failed_machines = []
         
         for machine in machines:
-            machine_id = machine["machineNumber"]
-            machine_type = machine.get("machine_type", "Unknown")
+            # Only use 'machine_id' (do not fallback to 'machineNumber')
+            machine_id = machine.get('machine_id')
+            machine_type = machine.get('machine_type', 'Unknown')
+            priority = machine.get('priority', 'medium')
             
-            # Check if machine already has open tasks
-            if self.check_existing_tasks(machine_id):
-                logger.info(f"Machine {machine_id} already has an open task. Skipping.")
-                skipped_machines.append(machine_id)
+            if not machine_id:
+                logger.error(f"Missing machine_id in machine dict: {machine}")
+                failed_machines.append({'machine': machine, 'reason': 'No machine_id'})
                 continue
-                
-            # Assign mechanic using workload balancing algorithm
+            
+            logger.info(f"TASK WRITER: Processing machine {machine_id} ({machine_type})")
+            
+            # Enhanced duplicate checking
+            existing_check = self.check_existing_tasks(machine_id, include_completed=True)
+            
+            if existing_check['has_open_tasks']:
+                logger.info(f"DUPLICATE PREVENTION: Machine {machine_id} has {existing_check['open_count']} open tasks. Skipping.")
+                duplicate_machines.append({
+                    'machine_id': machine_id,
+                    'open_tasks': existing_check['open_count'],
+                    'reason': 'Already has open maintenance tasks'
+                })
+                continue
+            
+            # Check if recently completed maintenance (optional intelligence)
+            if existing_check.get('days_since_last_maintenance', 999) < 7:
+                logger.info(f"SCHEDULING INTELLIGENCE: Machine {machine_id} had maintenance {existing_check['days_since_last_maintenance']} days ago. Proceeding anyway due to cluster analysis.")
+            
+            # Assign mechanic
             assignee, assignee_name = scheduler.assign_mechanic()
             
-            # Create the maintenance task
+            # Create maintenance task
             task = self.write_maintenance_task(
                 machine_id=machine_id,
                 machine_type=machine_type,
                 issue_type="preventative_maintenance",
-                description=(
-                    f"Schedule maintenance for {machine_type} (#{machine_id}) - "
-                    f"Identified in high failure cluster with {machine['failure_count']} failures"
-                ),
+                description=self._create_task_description(machine),
                 assignee=assignee,
                 assignee_name=assignee_name,
-                priority=machine["priority"],
-                due_days=7 if machine["priority"] == "high" else 14
+                priority=priority,
+                due_days=7 if priority == "high" else 14
             )
             
             if task:
+                logger.info(f"SUCCESS: Created {priority} priority task for machine {machine_id}")
                 tasks_created.append(task)
-                logger.info(f"Created {machine['priority']} priority task for machine {machine_id}")
+            else:
+                logger.error(f"FAILED: Could not create task for machine {machine_id}")
+                failed_machines.append({'machine_id': machine_id, 'reason': 'Task creation failed'})
         
-        # Return summary of the writing operation
+        # Comprehensive result summary
         result = {
             "created": tasks_created,
             "skipped": skipped_machines,
+            "duplicates": duplicate_machines,
+            "failed": failed_machines,
             "tasks_created": len(tasks_created),
             "high_priority_count": schedule_results.get('high_priority_count', 0),
             "medium_priority_count": schedule_results.get('medium_priority_count', 0),
-            "total_problematic_machines": schedule_results.get('total_problematic_machines', 0)
+            "total_processed": len(machines),
+            "success_rate": len(tasks_created) / len(machines) if machines else 0
         }
         
-        logger.info(f"Task writing complete. Created {len(tasks_created)} tasks, skipped {len(skipped_machines)} machines.")
-        return result
+        # Summary logging
+        logger.info(f"TASK WRITING COMPLETE:")
+        logger.info(f"  - Tasks created: {len(tasks_created)}")
+        logger.info(f"  - Duplicates prevented: {len(duplicate_machines)}")
+        logger.info(f"  - Failed: {len(failed_machines)}")
+        logger.info(f"  - Success rate: {result['success_rate']:.1%}")
         
+        if duplicate_machines:
+            logger.info(f"  - Machines with existing tasks: {[m['machine_id'] for m in duplicate_machines]}")
+        
+        return result
+    
+    def _create_task_description(self, machine: Dict) -> str:
+        """Create detailed task description from machine data."""
+        machine_id = machine.get('machine_id') or machine.get('machineNumber')
+        machine_type = machine.get('machine_type', 'Unknown')
+        failure_count = machine.get('failure_count', 0)
+        cluster = machine.get('cluster', 0)
+        reason = machine.get('reason', 'Cluster analysis identified maintenance need')
+        
+        return (f"Preventative maintenance for {machine_type} #{machine_id} - "
+                f"ML clustering analysis identified as high-risk (cluster {cluster}). "
+                f"Recent failures: {failure_count}. {reason}")
+    
     def get_tasks(
         self,
         status: Optional[str] = None,
@@ -174,7 +256,7 @@ class MaintenanceTaskWriter:
     ) -> List[Dict[str, Any]]:
         """Get tasks with optional filtering."""
         try:
-            query = self.db.table('scheduled_maintenance').select('*')
+            query = self.db.query_table('scheduled_maintenance', columns='*')
             filters = []
             
             if status:

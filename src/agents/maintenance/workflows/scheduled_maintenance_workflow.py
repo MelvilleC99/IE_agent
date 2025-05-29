@@ -4,7 +4,7 @@ import sys
 import logging
 import traceback
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, cast
 from pathlib import Path
 
 # Ensure src/ directory is on sys.path for absolute imports
@@ -24,7 +24,7 @@ logger = logging.getLogger("scheduled_maintenance_workflow")
 # Import modules
 try:
     # Config
-    from src.config.settings import SUPABASE_URL, SUPABASE_KEY
+    from config.settings import SUPABASE_URL, SUPABASE_KEY
     
     # Machine clustering
     from agents.maintenance.analytics.Scheduled_Maintenance.MachineCluster import run_analysis
@@ -36,13 +36,73 @@ try:
     from agents.maintenance.analytics.Scheduled_Maintenance.maintenance_notifier import MaintenanceNotifier
     
     # Database client
-    from src.shared_services.supabase_client import SupabaseClient
+    from shared_services.supabase_client import SupabaseClient
     
     logger.info("Successfully imported all required modules")
 except ImportError as e:
     logger.error(f"Import error: {e}")
     logger.error(traceback.format_exc())
     sys.exit(1)
+
+def transform_records_for_clustering(records):
+    """
+    Transform database records to the format expected by MachineCluster.
+    
+    Args:
+        records: List of records from downtime_detail table
+        
+    Returns:
+        List of records in the format expected by MachineCluster
+    """
+    logger.info(f"Transforming {len(records)} records for clustering analysis")
+    
+    transformed_records = []
+    
+    for record in records:
+        # Skip records without essential data
+        if not record.get('machine_number'):
+            continue
+            
+        # Handle null/empty purchase dates
+        purchase_date = record.get('machine_purchase_date')
+        if not purchase_date:
+            # Use a default date if no purchase date (e.g., 5 years ago)
+            purchase_date = '2019-01-01'
+        
+        # Ensure downtime is a valid number
+        total_downtime = record.get('total_downtime', 0)
+        try:
+            total_downtime_ms = float(total_downtime) * 60000  # Convert minutes to milliseconds
+        except (ValueError, TypeError):
+            total_downtime_ms = 0
+        
+        # Transform each record to match MachineCluster expectations
+        transformed_record = {
+            'id': record.get('id'),
+            'machineNumber': str(record.get('machine_number')),  # Ensure string
+            'totalDowntime': total_downtime_ms,
+            'machineData': {
+                'purchaseDate': purchase_date,
+                'make': record.get('machine_make', 'Unknown'),
+                'type': record.get('machine_type', 'Unknown'),
+                'model': record.get('machine_model', 'Unknown')
+            },
+            # Additional fields that might be useful
+            'reason': record.get('reason'),
+            'resolved_at': record.get('resolved_at'),
+            'created_at': record.get('created_at')
+        }
+        
+        transformed_records.append(transformed_record)
+    
+    logger.info(f"Transformed {len(transformed_records)} records successfully")
+    
+    # Log sample transformed record for debugging
+    if transformed_records:
+        sample = transformed_records[0]
+        logger.debug(f"Sample transformed record: {sample}")
+    
+    return transformed_records
 
 class ScheduledMaintenanceWorkflow:
     """
@@ -74,10 +134,11 @@ class ScheduledMaintenanceWorkflow:
         """
         Run the scheduled maintenance workflow:
         1. Fetch machine data
-        2. Run machine clustering analysis
-        3. Interpret results
-        4. Create maintenance tasks
-        5. Send notifications
+        2. Transform data for clustering
+        3. Run machine clustering analysis
+        4. Interpret results
+        5. Create maintenance tasks
+        6. Send notifications
         
         Args:
             period_start: Optional start date for the analysis period
@@ -90,7 +151,9 @@ class ScheduledMaintenanceWorkflow:
             'tasks_created': 0,
             'errors': [],
             'period_start': period_start.isoformat() if isinstance(period_start, datetime) else period_start,
-            'period_end': period_end.isoformat() if isinstance(period_end, datetime) else period_end
+            'period_end': period_end.isoformat() if isinstance(period_end, datetime) else period_end,
+            'records_processed': 0,
+            'machines_identified': 0
         }
         
         try:
@@ -137,10 +200,30 @@ class ScheduledMaintenanceWorkflow:
                 return result_summary
                 
             logger.info(f"Retrieved {len(records)} machine records")
+            result_summary['records_processed'] = len(records)
             
-            # --- Step 2: Run machine clustering analysis ---
+            # Log sample record for debugging
+            if records:
+                sample_record = records[0]
+                logger.debug(f"Sample database record keys: {list(sample_record.keys())}")
+                logger.debug(f"Sample machine_number: {sample_record.get('machine_number')}")
+                logger.debug(f"Sample total_downtime: {sample_record.get('total_downtime')}")
+            
+            # --- Step 2: Transform data for clustering ---
+            logger.info("Transforming data for clustering analysis...")
+            transformed_records = transform_records_for_clustering(records)
+            
+            if not transformed_records:
+                msg = "No valid records after transformation"
+                logger.warning(msg)
+                result_summary['errors'].append(msg)
+                return result_summary
+            
+            logger.info(f"Successfully transformed {len(transformed_records)} records")
+            
+            # --- Step 3: Run machine clustering analysis ---
             logger.info("Running machine clustering analysis...")
-            analysis_results = run_analysis(records)
+            analysis_results = run_analysis(transformed_records)
             
             if not analysis_results:
                 msg = "No results from machine clustering analysis"
@@ -148,28 +231,70 @@ class ScheduledMaintenanceWorkflow:
                 result_summary['errors'].append(msg)
                 return result_summary
             
-            result_summary['analysis_success'] = True
+            # Check for errors in analysis results
+            if isinstance(analysis_results, dict) and 'error' in analysis_results:
+                msg = f"Machine clustering analysis error: {analysis_results['error']}"
+                logger.error(msg)
+                result_summary['errors'].append(msg)
+                return result_summary
             
-            # --- Step 3: Interpret results ---
+            result_summary['analysis_success'] = True
+            logger.info("Machine clustering analysis completed successfully")
+            
+            # Log analysis results summary
+            if isinstance(analysis_results, dict):
+                aggregated_data = analysis_results.get('aggregated_data', [])
+                cluster_summary = analysis_results.get('cluster_summary', [])
+                logger.info(f"Analysis produced {len(aggregated_data)} machine records and {len(cluster_summary)} clusters")
+                
+                # Log sample aggregated data
+                if aggregated_data:
+                    sample_machine = aggregated_data[0]
+                    logger.debug(f"Sample aggregated machine: {sample_machine}")
+            
+            # --- Step 4: Interpret results ---
             logger.info("Interpreting clustering results...")
             machines_to_service = interpret_results(analysis_results)
-            
+
+            # Ensure correct type: List[Dict[str, Any]]
+            if not isinstance(machines_to_service, list) or not all(isinstance(m, dict) for m in machines_to_service):
+                logger.warning("machines_to_service is not a list of dicts. Filtering out invalid entries.")
+                machines_to_service = [m for m in machines_to_service if isinstance(m, dict)]
+            machines_to_service = cast(List[Dict[str, Any]], machines_to_service)
+
             if not machines_to_service:
                 logger.info("No machines identified for maintenance")
                 return result_summary
             
-            # --- Step 4: Create maintenance tasks ---
+            logger.info(f"Identified {len(machines_to_service)} machines for maintenance")
+            result_summary['machines_identified'] = len(machines_to_service)
+            
+            # Log the identified machines
+            for i, machine in enumerate(machines_to_service[:5]):  # Log first 5
+                logger.info(f"  {i+1}. Machine {machine.get('machineNumber', 'Unknown')}: "
+                          f"{machine.get('failure_count', 0)} failures, "
+                          f"{machine.get('priority', 'unknown')} priority")
+            
+            # --- Step 5: Create maintenance tasks ---
             logger.info("Creating maintenance tasks...")
             schedule_results = self.scheduler.schedule_maintenance_tasks(machines_to_service)
             write_results = self.writer.write_maintenance_tasks(schedule_results, self.scheduler)
             
             result_summary['tasks_created'] = write_results.get('tasks_created', 0)
             
-            # --- Step 5: Send notifications ---
+            logger.info(f"Successfully created {result_summary['tasks_created']} maintenance tasks")
+            
+            # --- Step 6: Send notifications ---
             if result_summary['tasks_created'] > 0:
                 logger.info("Sending maintenance notifications...")
-                self.notifier.send_notifications(machines_to_service)
+                notification_result = self.notifier.send_notifications(machines_to_service)
+                
+                if notification_result.get('status') == 'success':
+                    logger.info("Notifications sent successfully")
+                else:
+                    logger.warning(f"Issue with notifications: {notification_result}")
             
+            logger.info("Scheduled maintenance workflow completed successfully")
             return result_summary
             
         except Exception as e:
@@ -221,7 +346,9 @@ def main():
         # Print summary
         print("\n=== Scheduled Maintenance Workflow Summary ===")
         print(f"Analysis period: {period_start.strftime('%Y-%m-%d')} to {period_end.strftime('%Y-%m-%d')}")
+        print(f"Records processed: {result.get('records_processed', 0)}")
         print(f"Analysis status: {'Success' if result.get('analysis_success') else 'Failed'}")
+        print(f"Machines identified: {result.get('machines_identified', 0)}")
         print(f"Tasks created: {result.get('tasks_created', 0)}")
         
         if result.get('errors'):
