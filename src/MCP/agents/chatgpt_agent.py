@@ -231,6 +231,22 @@ For complex analysis, indicate that deeper investigation is needed."""
             }
         })
         
+        # Tool details function (for detailed explanations)
+        functions.append({
+            "name": "get_tool_details",
+            "description": "Get detailed explanation about a specific tool when user asks for more information",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Name of the tool to get details about (e.g., 'schedule maintenance', 'quick query', 'analyze performance')"
+                    }
+                },
+                "required": ["tool_name"]
+            }
+        })
+        
         return functions
     
     def process_query(self, query: str, conversation_history: Optional[List[Dict[str, str]]] = None, conversation_id: Optional[str] = None) -> Dict[str, Any]:
@@ -250,9 +266,6 @@ For complex analysis, indicate that deeper investigation is needed."""
         logger.info(f"Processing query with current date: {self.current_date['formatted_date']}")
         
         try:
-            # First check if this might be a follow-up question
-            is_follow_up = self._is_follow_up_query(query, conversation_history)
-            
             # Prepare messages with minimal context
             messages: List[ChatCompletionMessageParam] = [
                 {"role": "system", "content": self.system_prompt}
@@ -477,18 +490,29 @@ For complex analysis, indicate that deeper investigation is needed."""
         if not conversation_history:
             return False
         
-        # Keywords that indicate follow-up questions
-        follow_up_indicators = [
-            "them", "they", "these", "those", "it", "that",
-            "any of", "which ones", "how many", "what about",
-            "more details", "tell me more", "explain", "past due",
-            "overdue", "late", "expired", "behind schedule"
+        # Semantic follow-up indicators (much more specific)
+        follow_up_patterns = [
+            # Person/mechanic references
+            r'\b(?:for|from|by)\s+[A-Za-z]+(?:\s+[A-Za-z]+)?\b',  # "for Duncan", "by Sarah"
+            r'\b[A-Za-z]+(?:\s+[A-Za-z]+)?(?:\s+items?|\s+tasks?|\s+data)\b',  # "Duncan items", "Sarah tasks"
+            
+            # Analysis requests on current data
+            r'\bsummariz[e]?\b', r'\banalyze?\b', r'\btell me more\b',
+            r'\bdetails?\s+(?:about|on|for)\b', r'\bmore\s+info\b',
+            
+            # Filtering current data
+            r'\bshow\s+(?:me\s+)?(?:the\s+)?(?:ones?|items?|tasks?)\s+(?:for|from|by)\b',
+            r'\b(?:filter|show)\s+(?:by|for)\b',
+            
+            # Reference to previous results
+            r'\bthose\s+(?:items?|tasks?|results?)\b',
+            r'\bthe\s+(?:list|data|results?)\s+(?:for|from|by)\b'
         ]
         
         query_lower = query.lower()
-        for indicator in follow_up_indicators:
-            if indicator in query_lower:
-                logger.info(f"Detected follow-up query due to keyword: {indicator}")
+        for pattern in follow_up_patterns:
+            if re.search(pattern, query_lower):
+                logger.info(f"Detected semantic follow-up pattern: {pattern}")
                 return True
         
         return False
@@ -599,7 +623,6 @@ For complex analysis, indicate that deeper investigation is needed."""
                 logger.info(f"Quick query string: {query_string}")
                 
                 if self.tool_registry:
-                    # The query parameter should be passed as "query" not inside another dict
                     result = self.tool_registry.execute_tool("quick_query", {"query": query_string})
                     logger.info(f"Quick query execution result: {json.dumps(result)[:200]}...")
                     return result
@@ -643,6 +666,17 @@ For complex analysis, indicate that deeper investigation is needed."""
                     logger.error("Tool registry not available for query_database")
                     return {"error": "Tool registry not available"}
                     
+            elif function_name == "get_tool_details":
+                # Load detailed tool explanation from catalog file
+                tool_name = function_args.get("tool_name", "").lower()
+                try:
+                    result = self._load_tool_details(tool_name)
+                    logger.info(f"Tool details loaded for: {tool_name}")
+                    return {"detailed_explanation": result, "tool_requested": tool_name}
+                except Exception as e:
+                    logger.error(f"Error loading tool details: {e}")
+                    return {"error": f"Could not load details for '{tool_name}'. Available tools: view data, schedule maintenance, analyze performance, get details"}
+                    
             else:
                 logger.error(f"Unknown function: {function_name}")
                 return {"error": f"Unknown function '{function_name}'"}
@@ -650,3 +684,77 @@ For complex analysis, indicate that deeper investigation is needed."""
         except Exception as e:
             logger.error(f"Error executing function {function_name}: {e}", exc_info=True)
             return {"error": f"Error executing {function_name}: {str(e)}"}
+    
+    def _store_query_metadata(self, function_name: str, function_args: Dict[str, Any], result: Any):
+        """
+        Store simplified metadata about the executed query for context-aware follow-ups.
+        
+        Args:
+            function_name: Name of the function that was executed
+            function_args: Arguments passed to the function
+            result: Result returned by the function
+        """
+        try:
+            # Only store metadata for successful query operations
+            if function_name == "quick_query" and isinstance(result, dict) and result.get("success"):
+                query_type = result.get("query_type", "unknown")
+                query_text = function_args.get("query", "").lower()
+                
+                # Extract simple filters from the query text
+                mechanic_filter = self._extract_mechanic_from_query(query_text)
+                
+                # Store simple context
+                self.context_manager.add_query_metadata(
+                    query_type=query_type,
+                    tool_name=function_name,
+                    filters={"mechanic_name": mechanic_filter} if mechanic_filter else {},
+                    table_shown=query_type
+                )
+                logger.info(f"Stored simple context: {query_type} query, mechanic: {mechanic_filter or 'none'}")
+            
+            # Clear context for non-query operations to avoid confusion
+            elif function_name in ["get_tool_details", "run_scheduled_maintenance", "analyze_mechanic_performance"]:
+                # These operations change context, so clear follow-up state
+                logger.info(f"Clearing context after {function_name} operation")
+                self.context_manager.clear_query_metadata()
+        
+        except Exception as e:
+            logger.warning(f"Failed to store query metadata: {e}")
+    
+    def _extract_mechanic_from_query(self, query_text: str) -> Optional[str]:
+        """Extract mechanic name from query text using simple patterns."""
+        import re
+        
+        # Simple patterns for mechanic names
+        patterns = [
+            r'(?:for|by|from)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)',
+            r'([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+(?:items?|tasks?|data)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, query_text, re.IGNORECASE)
+            if match:
+                name = match.group(1).strip().lower()
+                # Basic validation - avoid common words
+                if name not in ['the', 'all', 'any', 'some', 'show', 'list', 'view']:
+                    return name
+        
+        return None
+    
+    def _load_tool_details(self, tool_name: str) -> str:
+        """Load detailed tool explanation from catalog file."""
+        try:
+            catalog_path = "/Users/melville/Documents/Industrial_Engineering_Agent/src/agents/maintenance/prompts/tool_catalog.txt"
+            
+            if not os.path.exists(catalog_path):
+                return f"Tool catalog not found at {catalog_path}. Please check the file exists."
+            
+            with open(catalog_path, 'r') as f:
+                content = f.read()
+            
+            # Let ChatGPT handle the matching - just provide the catalog with clear instructions
+            return f"User asked about: '{tool_name}'\n\nPlease find the matching section in this catalog and provide the detailed explanation:\n\n{content}"
+            
+        except Exception as e:
+            logger.error(f"Error loading tool details: {e}")
+            return f"Error loading tool details: {str(e)}"

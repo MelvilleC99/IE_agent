@@ -455,7 +455,7 @@ def register_query_tools():
     tool_registry.register_tool(
         name="quick_query",
         function=query_manager.execute_query,
-        description="Execute quick database queries for common requests (maintenance tasks, watchlist items).",
+        description="Execute quick database queries for maintenance data (maintenance tasks, watchlist items, performance data). Handles filtering by mechanic, date, status, machine, etc.",
         category="data_retrieval",
         parameters={
             "query": {
@@ -544,7 +544,26 @@ def register_minimal_quick_query():
             }
         )
         
-        logger.info("Minimal quick_query and watchlist details tools registered successfully")
+        # Register tool details function
+        def load_tool_details(tool_name: str) -> str:
+            """Load detailed tool explanation - placeholder function."""
+            return f"Detailed explanation for {tool_name} would be loaded from catalog file."
+        
+        tool_registry.register_tool(
+            name="get_tool_details", 
+            function=load_tool_details,
+            description="Get detailed explanation about a specific tool when user asks for more information.",
+            category="data_retrieval",
+            parameters={
+                "tool_name": {
+                    "type": "string",
+                    "description": "Name of the tool to get details about",
+                    "required": True
+                }
+            }
+        )
+        
+        logger.info("Minimal quick_query and tool details registered successfully")
     except Exception as e:
         logger.error(f"Failed to register minimal quick_query tool: {e}")
         raise
@@ -561,5 +580,38 @@ try:
     logger.info("Registered maintenance tools")
 except Exception as e:
     logger.error(f"Failed to register maintenance tools: {e}")
+
+# Ensure get_watchlist_details is always available
+try:
+    if "get_watchlist_details" not in tool_registry.get_tool_names():
+        from src.agents.maintenance.tools.query_tools.watchlist_query import WatchlistQueryTool
+        watchlist_tool = WatchlistQueryTool()
+        
+        tool_registry.register_tool(
+            name="get_watchlist_details",
+            function=watchlist_tool.get_item_details,
+            description="Get detailed information about a specific watchlist item, including performance metrics and recommendations.",
+            category="data_retrieval",
+            parameters={
+                "mechanic_name": {
+                    "type": "string",
+                    "description": "Name of the mechanic (required if item_id not provided)",
+                    "required": False
+                },
+                "issue_type": {
+                    "type": "string", 
+                    "description": "Type of issue (response_time or repair_time, required if item_id not provided)",
+                    "required": False
+                },
+                "item_id": {
+                    "type": "integer",
+                    "description": "Specific watchlist item ID (optional if mechanic_name and issue_type provided)",
+                    "required": False
+                }
+            }
+        )
+        logger.info("Registered get_watchlist_details tool directly")
+except Exception as e:
+    logger.error(f"Failed to register get_watchlist_details: {e}")
 
 logger.info(f"Registered {len(tool_registry.get_tool_names())} basic tools")

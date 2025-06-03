@@ -12,6 +12,7 @@ class ContextManager:
     
     This class maintains conversation history and recent context
     in a format that can be used by both OpenAI and DeepSeek.
+    Also tracks query metadata for context-aware follow-ups.
     """
     
     def __init__(self, session_manager=None, max_history: int = 6):
@@ -26,11 +27,20 @@ class ContextManager:
         self.max_history = max_history  # Reduced from 10 to 6 for token savings
         self.conversation_history = []
         
+        # Query metadata for context-aware follow-ups (lightweight)
+        self.query_metadata = {
+            "last_query_type": None,
+            "last_tool": None,
+            "last_filters": {},
+            "last_table_shown": None,
+            "timestamp": None
+        }
+        
         # Load history from session manager if available
         if session_manager:
             self._load_from_session()
             
-        logger.info(f"ContextManager initialized (max_history={max_history})")
+        logger.info(f"ContextManager initialized (max_history={max_history}, metadata tracking enabled)")
     
     def _load_from_session(self):
         """Load conversation history from session manager."""
@@ -138,20 +148,81 @@ class ContextManager:
         
         return "\n".join(context_parts)
     
+    def add_query_metadata(self, query_type: str, tool_name: str, filters: Dict[str, Any] = None, table_shown: str = None):
+        """
+        Add metadata about the last query executed for context-aware follow-ups.
+        
+        Args:
+            query_type: Type of query executed ('watchlist', 'scheduled_maintenance', etc.)
+            tool_name: Name of the tool that was used
+            filters: Filters that were applied to the query
+            table_shown: Name/type of table that was displayed
+        """
+        import time
+        
+        self.query_metadata = {
+            "last_query_type": query_type,
+            "last_tool": tool_name,
+            "last_filters": filters or {},
+            "last_table_shown": table_shown,
+            "timestamp": time.time()
+        }
+        
+        logger.debug(f"Added query metadata: {query_type} via {tool_name} with filters: {filters}")
+    
+    def get_last_query_metadata(self) -> Dict[str, Any]:
+        """
+        Get metadata about the last query for context-aware processing.
+        
+        Returns:
+            Dictionary with last query metadata or empty dict if none
+        """
+        return self.query_metadata.copy()
+    
+    def is_recent_query_metadata(self, max_age_seconds: int = 300) -> bool:
+        """
+        Check if the stored query metadata is recent enough to be relevant.
+        
+        Args:
+            max_age_seconds: Maximum age in seconds (default: 5 minutes)
+            
+        Returns:
+            True if metadata is recent and relevant
+        """
+        import time
+        
+        if not self.query_metadata.get("timestamp"):
+            return False
+            
+        age = time.time() - self.query_metadata["timestamp"]
+        return age <= max_age_seconds
+    
+    def clear_query_metadata(self):
+        """Clear the query metadata (useful when starting new conversation topics)."""
+        self.query_metadata = {
+            "last_query_type": None,
+            "last_tool": None,
+            "last_filters": {},
+            "last_table_shown": None,
+            "timestamp": None
+        }
+        logger.debug("Cleared query metadata")
+    
     def clear_history(self):
-        """Clear the conversation history."""
+        """Clear the conversation history and query metadata."""
         self.conversation_history = []
+        self.clear_query_metadata()
         
         # Clear session if available
         if self.session_manager:
             self.session_manager.clear_conversation_history()
             
-        logger.info("Conversation history cleared")
+        logger.info("Conversation history and query metadata cleared")
     
     def get_summary_for_handoff(self) -> str:
         """
         Get a summary of the conversation for handoff between agents.
-        
+
         Returns:
             Summary string optimized for token usage
         """

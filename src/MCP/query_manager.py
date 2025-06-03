@@ -16,32 +16,31 @@ class QueryManager:
         self.query_patterns = {
             'watchlist': [
                 r'watch\s*list',
-                r'performance\s+measurement',
-                r'monitoring',
-                r'measuring',
-                r'keeping\s+an\s+eye',
-                r'review(?:ing)?',
-                r'response\s+time.*(?:monitor|watch|items?|list)',
-                r'repair\s+time.*(?:monitor|watch|items?|list)',
-                r'measurement\s+(?:tasks?|points?|items?)',
-                r'(?:items?|things?)\s+.*(?:response\s+time|repair\s+time)',
-                r'(?:show|list|display).*(?:response\s+time|repair\s+time)',
-                r'watchlist.*(?:response|repair)',
-                r'(?:response|repair)\s+time.*(?:items?|watchlist)'
+                r'performance\s+(?:measurement|monitoring|items?)',
+                r'(?:monitoring|measuring|tracking)\s+(?:performance|issues?)',
+                r'keeping\s+an\s+eye\s+on',
+                r'review(?:ing)?\s+(?:performance|issues?)',
+                r'response\s+time.*(?:monitor|watch|tracking|issues?)',
+                r'repair\s+time.*(?:monitor|watch|tracking|issues?)',
+                r'performance\s+(?:measurement|monitoring).*(?:tasks?|points?|items?)',
+                r'(?:show|list|display|view).*(?:watchlist|watch\s+list)',
+                r'(?:show|list|display|view).*(?:performance\s+(?:measurement|monitoring))',
+                r'performance.*(?:monitoring|measurement).*(?:items?|list)',
+                r'(?:z-score|statistical).*(?:performance|monitoring)'
             ],
             'scheduled_maintenance': [
-                r'scheduled\s+maintenance',
-                r'maintenance\s+tasks?',
+                r'scheduled\s+maintenance(?!\s+measurement)',
+                r'maintenance\s+(?:tasks?|schedule|plan)(?!\s+measurement)',
                 r'preventative\s+maintenance',
-                r'pm\s+tasks?',
-                r'maintenance.*open',
-                r'maintenance.*due',
-                r'items?\s+assigned\s+to',
-                r'assigned\s+to.*(?:items?|tasks?)',
-                r'tasks?\s+for\s+\w+',
-                r'(?:what|which).*assigned',
-                r'(?:what|which).*items?.*for',
-                r'who.*assigned'
+                r'pm\s+(?:tasks?|schedule)',
+                r'maintenance.*(?:open|due|assigned|scheduled)',
+                r'(?:show|list|display|view).*maintenance.*(?:tasks?|schedule)',
+                r'(?:items?|tasks?)\s+assigned\s+to.*(?:mechanic|person)',
+                r'assigned.*(?:maintenance|tasks?)',
+                r'(?:mechanic|person).*assigned.*(?:tasks?|items?)',
+                r'(?:what|which|who).*assigned.*(?:maintenance|tasks?)',
+                r'(?:what|which|who).*(?:maintenance|tasks?).*(?:for|assigned)',
+                r'who.*(?:responsible|assigned).*maintenance'
             ]
         }
         
@@ -53,6 +52,9 @@ class QueryManager:
     def classify_query(self, query: str) -> Tuple[Optional[str], Dict[str, Any]]:
         """
         Classify a query and extract parameters.
+        
+        Args:
+            query: The user's query
         
         Returns:
             Tuple of (query_type, parameters)
@@ -139,6 +141,9 @@ class QueryManager:
     def execute_query(self, query: str) -> Dict[str, Any]:
         """
         Execute a query by routing to the appropriate tool.
+        
+        Args:
+            query: The user's natural language query
         
         Returns:
             Dict with 'success', 'data', and 'format' keys

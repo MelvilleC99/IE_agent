@@ -1,0 +1,127 @@
+# MAINTENANCE ASSISTANT TOOL CATALOG
+
+## QUICK_QUERY
+**Name:** Quick Queries
+**Brief:** View scheduled tasks, watchlist items, and performance metrics
+**Detailed Explanation:** 
+The quick query tool enables you to query data across the database to get information without having to access specific tables directly. You can ask for maintenance tasks, mechanic assignments, performance monitoring items, machine data, and more. It's your main interface for viewing existing information in the system.
+
+**Examples:**
+- "Show me maintenance tasks for this week"
+- "List watchlist items for Duncan"
+- "View mechanic workloads"
+
+---
+
+## RUN_SCHEDULED_MAINTENANCE
+**Name:** Schedule Maintenance
+**Brief:** Create data-driven maintenance schedules using cluster analysis
+**Detailed Explanation:**
+This tool analyzes your data over a specified period and runs cluster analysis to identify two groups of machines: those working normally and those failing more than average. It then creates maintenance tasks and assigns them to mechanics based on their weekly capacity and expertise. The analysis helps prioritize which machines need attention most urgently.
+
+**What it does:**
+1. Analyzes historical breakdown data
+2. Uses clustering algorithms to identify high-risk machines
+3. Creates preventive maintenance schedules
+4. Assigns tasks to mechanics based on workload and skills
+
+**Examples:**
+- "Schedule maintenance for next month"
+- "Run cluster analysis on recent breakdowns"
+- "Create maintenance plan"
+
+---
+
+## ANALYZE_MECHANIC_PERFORMANCE
+**Name:** Analyze Mechanic Performance
+**Brief:** Identify performance outliers and improvement areas
+**Detailed Explanation:**
+Runs statistical analysis on mechanic response times and repair times against specific machines and failure reasons. It calculates averages for all mechanics and identifies those sitting outside certain standard deviations, flagging them for potential performance monitoring or improvement opportunities.
+
+**What it analyzes:**
+- Response times by mechanic and machine type
+- Repair times by mechanic and failure reason
+- Statistical outliers using z-score analysis
+- Performance trends over time
+
+**Follow-up capability:** Items flagged for monitoring are added to the watchlist for ongoing tracking.
+
+**Examples:**
+- "Analyze mechanic performance for last month"
+- "Check response times for all mechanics"
+- "Identify performance outliers"
+
+---
+
+## GET_WATCHLIST_DETAILS
+**Name:** Get Details
+**Brief:** Detailed information about specific watchlist items
+**Detailed Explanation:**
+Provides comprehensive details about specific performance monitoring items. When mechanics or processes are flagged for monitoring, this tool gives you the full context including performance metrics, comparison to team averages, statistical significance, and improvement recommendations.
+
+**What it shows:**
+- Individual vs team average performance
+- Statistical significance (z-scores)
+- Monitoring period and progress
+- Recommendations for improvement
+
+**Examples:**
+- Used automatically when you ask "details about Duncan" after viewing watchlist
+- "Tell me more about response time issues"
+
+---
+
+## TIME_SERIES_ANALYSIS
+**Name:** Time Series Analysis
+**Brief:** Find patterns in repair efficiency and timing
+**Detailed Explanation:**
+Runs time series analysis to identify patterns in your maintenance data. It can find specific hours of the day or days of the week where response or repair times are consistently slower, helping you identify potential staffing or process issues.
+
+**What it identifies:**
+- Hour-by-hour performance patterns
+- Day-of-week efficiency variations
+- Seasonal trends in repair effectiveness
+- Potential staffing optimization opportunities
+
+**Status:** Coming soon
+**Examples:**
+- "Are we slower on certain days?"
+- "What hours have the longest repair times?"
+
+---
+
+## REPEAT_FAILURE_ANALYSIS
+**Name:** Repeat Failure Analysis
+**Brief:** Measure how effective we are at fixing problems
+**Detailed Explanation:**
+Analyzes repair effectiveness by identifying repeat failures that occur within 30 minutes of a "fix." This helps measure how well mechanics are actually solving problems versus just getting machines running temporarily.
+
+**What it measures:**
+- Failures that reoccur within 30 minutes
+- Effectiveness rates by mechanic and machine type
+- Root cause identification opportunities
+- Quality of repair work
+
+**Status:** Coming soon
+**Examples:**
+- "How effective are our repairs?"
+- "Check for repeat failures this week"
+
+---
+
+## PARETO_ANALYSIS
+**Name:** Impact Analysis (Pareto)
+**Brief:** Identify priority improvement areas using 80/20 principle
+**Detailed Explanation:**
+Applies the Pareto principle (80/20 rule) to your maintenance data to identify the areas where focusing effort will have the biggest impact on reducing downtime. Scans failure data, repair times, and machine performance to highlight the critical few issues that cause the majority of problems.
+
+**What it identifies:**
+- Machine types causing 80% of downtime
+- Failure reasons with biggest impact
+- Priority areas for improvement focus
+- Resource allocation recommendations
+
+**Status:** Coming soon
+**Examples:**
+- "What should we focus on to reduce downtime?"
+- "Show me the biggest impact areas"
