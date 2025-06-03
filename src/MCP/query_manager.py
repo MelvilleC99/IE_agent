@@ -21,9 +21,13 @@ class QueryManager:
                 r'measuring',
                 r'keeping\s+an\s+eye',
                 r'review(?:ing)?',
-                r'response\s+time.*monitor',
-                r'repair\s+time.*monitor',
-                r'measurement\s+(?:tasks?|points?|items?)'
+                r'response\s+time.*(?:monitor|watch|items?|list)',
+                r'repair\s+time.*(?:monitor|watch|items?|list)',
+                r'measurement\s+(?:tasks?|points?|items?)',
+                r'(?:items?|things?)\s+.*(?:response\s+time|repair\s+time)',
+                r'(?:show|list|display).*(?:response\s+time|repair\s+time)',
+                r'watchlist.*(?:response|repair)',
+                r'(?:response|repair)\s+time.*(?:items?|watchlist)'
             ],
             'scheduled_maintenance': [
                 r'scheduled\s+maintenance',
@@ -31,7 +35,13 @@ class QueryManager:
                 r'preventative\s+maintenance',
                 r'pm\s+tasks?',
                 r'maintenance.*open',
-                r'maintenance.*due'
+                r'maintenance.*due',
+                r'items?\s+assigned\s+to',
+                r'assigned\s+to.*(?:items?|tasks?)',
+                r'tasks?\s+for\s+\w+',
+                r'(?:what|which).*assigned',
+                r'(?:what|which).*items?.*for',
+                r'who.*assigned'
             ]
         }
         
@@ -76,12 +86,20 @@ class QueryManager:
         elif "tomorrow" in query_lower:
             params["time_filter"] = "tomorrow"
             
-        # Extract mechanic filter
-        mechanic_match = re.search(r'(?:for|mechanic)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\s*(?:#?(\d{3}))?', query)
-        if mechanic_match:
-            params["mechanic_name"] = mechanic_match.group(1)
-            if mechanic_match.group(2):
-                params["mechanic_id"] = mechanic_match.group(2)
+        # Extract mechanic filter - enhanced patterns
+        mechanic_patterns = [
+            r'(?:for|mechanic)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\s*(?:#?(\d{3}))?',
+            r'assigned\s+to\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\s*(?:#?(\d{3}))?',
+            r'(?:by|from)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\s*(?:#?(\d{3}))?'
+        ]
+        
+        for pattern in mechanic_patterns:
+            mechanic_match = re.search(pattern, query, re.IGNORECASE)
+            if mechanic_match:
+                params["mechanic_name"] = mechanic_match.group(1).strip().lower()
+                if len(mechanic_match.groups()) > 1 and mechanic_match.group(2):
+                    params["mechanic_id"] = mechanic_match.group(2)
+                break
                 
         # Extract machine filter for maintenance queries
         if query_type == "scheduled_maintenance":
@@ -96,12 +114,19 @@ class QueryManager:
                         params["machine_type"] = machine_type.title()
                         break
                         
-        # Extract issue type filter for watchlist
+        # Extract issue type filter for watchlist with more precise matching
         if query_type == "watchlist":
-            if "response time" in query_lower:
+            # Look for specific issue type mentions
+            if re.search(r'\bresponse\s+time\b', query_lower):
                 params["issue_type"] = "response_time"
-            elif "repair time" in query_lower:
+            elif re.search(r'\brepair\s+time\b', query_lower):
                 params["issue_type"] = "repair_time"
+            
+            # Also check for machine type or entity filters
+            if re.search(r'\bmachine\b', query_lower):
+                params["entity_type"] = "machine"
+            elif re.search(r'\bmechanic\b', query_lower):
+                params["entity_type"] = "mechanic"
                 
         # Extract status filter
         if "open" in query_lower or "active" in query_lower:

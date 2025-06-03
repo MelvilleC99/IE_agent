@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 from datetime import datetime, timedelta
-import inquirer  # You'll need to pip install inquirer
+
+try:
+    import inquirer  # You'll need to pip install inquirer
+    INQUIRER_AVAILABLE = True
+except ImportError:
+    INQUIRER_AVAILABLE = False
+    print("Warning: inquirer not available, falling back to simple mode for interactive selection")
 
 class DateSelector:
     """
@@ -34,6 +40,10 @@ class DateSelector:
     @staticmethod
     def _interactive_date_selection():
         """Interactive command-line date selection."""
+        if not INQUIRER_AVAILABLE:
+            print("Interactive mode requires 'inquirer' package. Using default range.")
+            return DateSelector._default_range()
+            
         # Predefined period options
         period_choices = [
             ('Previous Month', 'prev_month'),

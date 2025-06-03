@@ -27,11 +27,10 @@ logger = logging.getLogger(__name__)
 from agents.maintenance.analytics.Mechanic_performance_tool.mechanic_repair_analyzer import run_mechanic_analysis
 from agents.maintenance.analytics.Mechanic_performance_tool.mechanic_repair_interpreter import interpret_analysis_results
 from agents.maintenance.analytics.Mechanic_performance_tool.write_analysis import AnalysisWriter
-from agents.maintenance.analytics.Mechanic_performance_tool.write_findings import FindingsWriter
 from agents.maintenance.analytics.Mechanic_performance_tool.write_watchlist import WatchlistWriter
 from agents.maintenance.analytics.Mechanic_performance_tool.notification_handler import NotificationHandler
 from agents.maintenance.tools.date_selector import DateSelector
-from shared_services.db_client import get_connection
+from shared_services.supabase_client import SupabaseClient
 
 def run_mechanic_performance_workflow(start_date=None, end_date=None):
     """
@@ -39,9 +38,8 @@ def run_mechanic_performance_workflow(start_date=None, end_date=None):
     1. Analyze mechanic performance data from database
     2. Write analysis results to database for historical reference
     3. Interpret analysis and identify issues
-    4. Write findings to database
-    5. Create watchlist items from findings
-    6. Send notification
+    4. Create watchlist items directly from analysis
+    5. Send notification
     
     Args:
         start_date: Start date for analysis period (optional)
@@ -63,7 +61,6 @@ def run_mechanic_performance_workflow(start_date=None, end_date=None):
             "analysis": {"status": "pending", "details": None},
             "write_analysis": {"status": "pending", "details": None},
             "interpretation": {"status": "pending", "details": None},
-            "write_findings": {"status": "pending", "details": None},
             "create_watchlist_items": {"status": "pending", "details": None},
             "notification": {"status": "pending", "details": None}
         },
@@ -74,7 +71,7 @@ def run_mechanic_performance_workflow(start_date=None, end_date=None):
     try:
         # Step 1: Analyze mechanic performance data
         logger.info("Step 1: Running mechanic performance analysis")
-        analysis_results = run_mechanic_analysis(start_date=start_date, end_date=end_date)
+        analysis_results = run_mechanic_analysis(start_date, end_date)
         
         if not analysis_results:
             logger.error("Analysis failed or returned empty results") 
@@ -101,7 +98,7 @@ def run_mechanic_performance_workflow(start_date=None, end_date=None):
         
         # Step 3: Interpret analysis and identify issues
         logger.info("Step 3: Interpreting analysis results")
-        findings = interpret_analysis_results(analysis_results)
+        findings = interpret_analysis_results(analysis_results, analysis_records)
         
         results["steps"]["interpretation"]["status"] = "completed"
         results["steps"]["interpretation"]["details"] = {
@@ -109,21 +106,10 @@ def run_mechanic_performance_workflow(start_date=None, end_date=None):
         }
         logger.info(f"Identified {len(findings)} potential findings")
         
-        # Step 4: Write findings to database
-        logger.info("Step 4: Writing findings to database")
-        findings_writer = FindingsWriter()
-        saved_findings = findings_writer.save_findings(findings)
-        
-        results["steps"]["write_findings"]["status"] = "completed"
-        results["steps"]["write_findings"]["details"] = {
-            "findings_saved": len(saved_findings)
-        }
-        logger.info(f"Saved {len(saved_findings)} findings to database")
-        
-        # Step 5: Create watchlist items from findings
-        logger.info("Step 5: Creating watchlist items from findings")
+        # Step 4: Create watchlist items directly from findings
+        logger.info("Step 4: Creating watchlist items from findings")
         watchlist_writer = WatchlistWriter()
-        watchlist_items = watchlist_writer.create_watchlist_items_from_findings()
+        watchlist_items = watchlist_writer.create_watchlist_items_from_findings(findings)
         
         results["steps"]["create_watchlist_items"]["status"] = "completed"
         results["steps"]["create_watchlist_items"]["details"] = {
@@ -131,8 +117,8 @@ def run_mechanic_performance_workflow(start_date=None, end_date=None):
         }
         logger.info(f"Created {len(watchlist_items)} watchlist items from findings")
         
-        # Step 6: Send notification
-        logger.info("Step 6: Sending notification")
+        # Step 5: Send notification
+        logger.info("Step 5: Sending notification")
         notification_handler = NotificationHandler()
         notification = notification_handler.create_workflow_completion_notification(len(watchlist_items))
         

@@ -360,12 +360,13 @@ def register_supabase_tools():
 def register_maintenance_tools():
     """Register maintenance tools with the registry."""
     from src.agents.maintenance.tools.scheduled_maintenance_tool import scheduled_maintenance_tool
+    from src.agents.maintenance.tools.mechanic_performance_tool import mechanic_performance_tool
     
     # Register the scheduled maintenance tool
     tool_registry.register_tool(
         name="run_scheduled_maintenance",
         function=scheduled_maintenance_tool,
-        description="Run the factory's scheduled maintenance workflow.",
+        description="Run the factory's scheduled maintenance workflow with clustering analysis.",
         category="maintenance",
         parameters={
             "action": {
@@ -392,6 +393,46 @@ def register_maintenance_tools():
                 "type": "boolean",
                 "description": "Whether to use database or file storage",
                 "required": False
+            },
+            "force": {
+                "type": "boolean",
+                "description": "Override 30-day clustering frequency limit",
+                "required": False
+            }
+        }
+    )
+    
+    # Register the mechanic performance tool
+    tool_registry.register_tool(
+        name="analyze_mechanic_performance",
+        function=mechanic_performance_tool,
+        description="Analyze mechanic performance including response times and repair times.",
+        category="maintenance",
+        parameters={
+            "action": {
+                "type": "string",
+                "description": "Action to perform ('analyze', 'run')",
+                "required": True
+            },
+            "start_date": {
+                "type": "string",
+                "description": "Start date for analysis (YYYY-MM-DD)",
+                "required": False
+            },
+            "end_date": {
+                "type": "string",
+                "description": "End date for analysis (YYYY-MM-DD)",
+                "required": False
+            },
+            "mode": {
+                "type": "string", 
+                "description": "Date selection mode ('args' or 'interactive')",
+                "required": False
+            },
+            "force": {
+                "type": "boolean",
+                "description": "Override 30-day frequency limit",
+                "required": False
             }
         }
     )
@@ -399,7 +440,7 @@ def register_maintenance_tools():
 # Register query tools
 def register_query_tools():
     """Register query tools with the registry."""
-    from MCP.query_manager import QueryManager
+    from src.MCP.query_manager import QueryManager
     from src.agents.maintenance.tools.query_tools.watchlist_query import WatchlistQueryTool
     from src.agents.maintenance.tools.query_tools.scheduled_maintenance_query import ScheduledMaintenanceQueryTool
     
@@ -430,8 +471,95 @@ def register_all_tools():
     """Register all tools with the registry."""
     register_supabase_tools()
     register_maintenance_tools()
-    register_query_tools()
+    # Don't register query tools during module initialization to avoid circular imports
+    # They will be registered when the orchestrator initializes
     logger.info(f"Registered {len(tool_registry.get_tool_names())} tools")
+
+# Function to register query tools later (called by orchestrator)
+def register_query_tools_if_needed():
+    """Register query tools if they haven't been registered yet."""
+    if "quick_query" not in tool_registry.get_tool_names():
+        try:
+            register_query_tools()
+            logger.info("Query tools registered successfully")
+        except Exception as e:
+            logger.error(f"Failed to register query tools: {e}")
+            # Register a minimal quick_query tool as fallback
+            register_minimal_quick_query()
+
+def register_minimal_quick_query():
+    """Register a minimal quick_query tool that works directly."""
+    try:
+        from src.MCP.query_manager import QueryManager
+        from src.agents.maintenance.tools.query_tools.scheduled_maintenance_query import ScheduledMaintenanceQueryTool
+        from src.agents.maintenance.tools.query_tools.watchlist_query import WatchlistQueryTool
+        
+        # Create query manager instance
+        query_manager = QueryManager()
+        
+        # Create watchlist tool instance for details
+        watchlist_tool = WatchlistQueryTool()
+        
+        # Register individual query tools with the manager
+        query_manager.register_query_tool("watchlist", watchlist_tool)
+        query_manager.register_query_tool("scheduled_maintenance", ScheduledMaintenanceQueryTool())
+        
+        # Register the query manager as a single tool
+        tool_registry.register_tool(
+            name="quick_query",
+            function=query_manager.execute_query,
+            description="Execute quick database queries for common requests (maintenance tasks, watchlist items).",
+            category="data_retrieval",
+            parameters={
+                "query": {
+                    "type": "string",
+                    "description": "Natural language query about maintenance tasks or performance measurements",
+                    "required": True
+                }
+            }
+        )
+        
+        # Register watchlist details as a separate tool
+        tool_registry.register_tool(
+            name="get_watchlist_details",
+            function=watchlist_tool.get_item_details,
+            description="Get detailed information about a specific watchlist item, including performance metrics and recommendations.",
+            category="data_retrieval",
+            parameters={
+                "mechanic_name": {
+                    "type": "string",
+                    "description": "Name of the mechanic (required if item_id not provided)",
+                    "required": False
+                },
+                "issue_type": {
+                    "type": "string", 
+                    "description": "Type of issue (response_time or repair_time, required if item_id not provided)",
+                    "required": False
+                },
+                "item_id": {
+                    "type": "integer",
+                    "description": "Specific watchlist item ID (optional if mechanic_name and issue_type provided)",
+                    "required": False
+                }
+            }
+        )
+        
+        logger.info("Minimal quick_query and watchlist details tools registered successfully")
+    except Exception as e:
+        logger.error(f"Failed to register minimal quick_query tool: {e}")
+        raise
     
-# Initialize all tools when this module is imported
-register_all_tools()
+# Initialize basic tools when this module is imported (but not query tools)
+try:
+    register_supabase_tools()
+    logger.info("Registered Supabase tools")
+except Exception as e:
+    logger.error(f"Failed to register Supabase tools: {e}")
+
+try:
+    register_maintenance_tools()
+    logger.info("Registered maintenance tools")
+except Exception as e:
+    logger.error(f"Failed to register maintenance tools: {e}")
+
+logger.info(f"Registered {len(tool_registry.get_tool_names())} basic tools")

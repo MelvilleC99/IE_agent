@@ -1,8 +1,16 @@
 import logging
 from typing import Dict, Any, List
+import sys
+import os
+
+# Add project root to path
+current_file = os.path.abspath(__file__)
+project_root = os.path.abspath(os.path.join(current_file, "../../../../../"))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 # Import the base handler
-from MCP.query_handler import QueryHandler
+from src.MCP.query_handler import QueryHandler
 
 logger = logging.getLogger("scheduled_maintenance_query")
 
@@ -30,7 +38,9 @@ class ScheduledMaintenanceQueryTool(QueryHandler):
         
         # Mechanic filter
         if "mechanic_name" in params:
-            filters["mechanic_name"] = params["mechanic_name"]
+            mechanic_name = params["mechanic_name"]
+            # Handle case-insensitive search by using ilike
+            filters["mechanic_name.ilike"] = f"%{mechanic_name}%"
         elif "mechanic_id" in params:
             filters["assignee"] = params["mechanic_id"]
         

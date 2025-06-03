@@ -1,9 +1,17 @@
 import logging
 from typing import Dict, Any, List
 import re
+import sys
+import os
+
+# Add project root to path
+current_file = os.path.abspath(__file__)
+project_root = os.path.abspath(os.path.join(current_file, "../../../../../"))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 # Import the base handler
-from MCP.query_handler import QueryHandler
+from src.MCP.query_handler import QueryHandler
 
 logger = logging.getLogger("watchlist_query")
 
@@ -14,7 +22,7 @@ class WatchlistQueryTool(QueryHandler):
     
     def execute(self, query: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a watchlist query with the given parameters."""
-        logger.info(f"Executing watchlist query with params: {params}")
+        logger.info(f"Executing watchlist query: '{query}' with params: {params}")
         
         # Build filters
         filters = {}
@@ -23,19 +31,29 @@ class WatchlistQueryTool(QueryHandler):
         status = params.get("status", "open")
         filters["status"] = status
         
-        # Issue type filter
+        # Issue type filter - exact match for database
         if "issue_type" in params:
             filters["issue_type"] = params["issue_type"]
+            logger.info(f"Added issue_type filter: {params['issue_type']}")
+        
+        # Entity type filter
+        if "entity_type" in params:
+            filters["entity_type"] = params["entity_type"]
+            logger.info(f"Added entity_type filter: {params['entity_type']}")
         
         # Mechanic filter
         if "mechanic_name" in params:
-            filters["mechanic_name"] = params["mechanic_name"]
+            # Use case-insensitive search for mechanic names
+            filters["mechanic_name.ilike"] = f"%{params['mechanic_name']}%"
+            logger.info(f"Added mechanic_name filter: {params['mechanic_name']}")
         elif "mechanic_id" in params:
             filters["mechanic_id"] = params["mechanic_id"]
         
         # Time filter for review dates
         if "time_filter" in params:
             self.apply_time_filter(filters, params, "monitor_end_date")
+        
+        logger.info(f"Final filters for watchlist query: {filters}")
         
         # Query the database
         try:
@@ -46,16 +64,22 @@ class WatchlistQueryTool(QueryHandler):
                 limit=100
             )
             
+            logger.info(f"Found {len(data)} watchlist items with filters: {filters}")
+            
+            # Log the actual items found for debugging
+            if data:
+                for item in data:
+                    logger.info(f"  Item: ID={item.get('id')}, Issue={item.get('issue_type')}, Mechanic={item.get('mechanic_name')}, Status={item.get('status')}")
+            
             # Process the data
             formatted_data = self._format_watchlist_data(data)
             
-            # Define columns to display
+            # Define simplified columns per requirements
             display_columns = [
                 "issue_type",
-                "mechanic_info",
-                "performance_detail",
+                "mechanic_name", 
                 "status",
-                "review_date"
+                "monitor_period"
             ]
             
             return self.format_results(formatted_data, display_columns)
@@ -69,24 +93,93 @@ class WatchlistQueryTool(QueryHandler):
             }
     
     def _format_watchlist_data(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Format watchlist data for display."""
+        """Format watchlist data for simplified display."""
         formatted_data = []
         
         for row in data:
-            # Extract performance details from notes
-            notes = row.get("notes", "")
-            performance_detail = self._extract_performance_detail(notes)
-            
             formatted_row = {
                 "issue_type": row.get("issue_type", "").replace("_", " ").title(),
-                "mechanic_info": f"{row.get('mechanic_name', '')} (#{row.get('mechanic_id', '')})",
-                "performance_detail": performance_detail,
+                "mechanic_name": row.get("mechanic_name", ""),
                 "status": row.get("status", ""),
-                "review_date": self.parse_date(row.get("monitor_end_date", ""))
+                "monitor_period": f"{self.parse_date(row.get('monitor_start_date', ''))} to {self.parse_date(row.get('monitor_end_date', ''))}"
             }
             formatted_data.append(formatted_row)
         
         return formatted_data
+    
+    def get_item_details(self, item_id: int = None, mechanic_name: str = None, issue_type: str = None) -> Dict[str, Any]:
+        """Get detailed information about a specific watchlist item."""
+        filters = {"status": "open"}
+        
+        if item_id:
+            filters["id"] = item_id
+        elif mechanic_name and issue_type:
+            filters["mechanic_name.ilike"] = f"%{mechanic_name}%"
+            filters["issue_type"] = issue_type
+        else:
+            return {"error": "Must provide either item_id or mechanic_name + issue_type"}
+        
+        try:
+            data = self.db_client.query_table(
+                table_name="watch_list",
+                columns="*",
+                filters=filters,
+                limit=1
+            )
+            
+            if not data:
+                return {"error": "No matching watchlist item found"}
+            
+            item = data[0]
+            notes = item.get("notes", "")
+            
+            # Extract detailed performance information
+            performance_detail = self._extract_detailed_performance(notes)
+            
+            return {
+                "title": item.get("title", ""),
+                "mechanic": f"{item.get('mechanic_name', '')} (#{item.get('mechanic_id', '')})",
+                "issue_type": item.get("issue_type", "").replace("_", " ").title(),
+                "status": item.get("status", ""),
+                "monitor_period": f"{item.get('monitor_start_date', '')} to {item.get('monitor_end_date', '')}",
+                "performance_details": performance_detail,
+                "recommendation": item.get("recommendation", "No recommendation yet")
+            }
+            
+        except Exception as e:
+            return {"error": str(e)}
+    
+    def _extract_detailed_performance(self, notes: str) -> str:
+        """Extract detailed performance information from notes."""
+        if not notes:
+            return "No performance details available"
+        
+        # Look for specific patterns in the notes
+        patterns = [
+            r'average\s+(response|repair)\s+time\s+is\s+([\d.]+)\s*min.*?team\s+average\s+of\s+([\d.]+)\s*min',
+            r'Z-score:\s*([\d.-]+)',
+            r'([\d.]+)\s*standard\s+deviations?\s+(above|below)\s+mean'
+        ]
+        
+        details = []
+        
+        for pattern in patterns:
+            match = re.search(pattern, notes, re.IGNORECASE)
+            if match:
+                if 'average' in pattern:
+                    metric_type = match.group(1)
+                    individual = match.group(2)
+                    team_avg = match.group(3)
+                    details.append(f"{metric_type.title()} time: {individual} min (team average: {team_avg} min)")
+                elif 'Z-score' in pattern:
+                    z_score = match.group(1)
+                    details.append(f"Z-score: {z_score}")
+                elif 'standard' in pattern:
+                    std_dev = match.group(1)
+                    direction = match.group(2)
+                    details.append(f"{std_dev} standard deviations {direction} team mean")
+        
+        return "; ".join(details) if details else notes[:200] + "..." if len(notes) > 200 else notes
     
     def _extract_performance_detail(self, notes: str) -> str:
         """Extract performance details from notes field."""

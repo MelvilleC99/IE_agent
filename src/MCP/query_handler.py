@@ -13,7 +13,7 @@ if project_root not in sys.path:
 
 # Import the Supabase client
 from src.shared_services.supabase_client import SupabaseClient
-from MCP.agents.utils.date_utils import date_utils
+from src.MCP.agents.utils.date_utils import date_utils
 
 logger = logging.getLogger("query_handler")
 

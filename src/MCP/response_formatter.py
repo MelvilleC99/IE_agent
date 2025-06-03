@@ -5,9 +5,17 @@ import json
 import re
 from typing import Dict, Any, List, Optional, Union, Tuple
 from datetime import datetime
+import sys
+import os
+
+# Add project root to path
+current_file = os.path.abspath(__file__)
+project_root = os.path.abspath(os.path.join(current_file, "../../.."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 # Import date utilities
-from MCP.agents.utils.date_utils import date_utils
+from src.MCP.agents.utils.date_utils import date_utils
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -372,7 +380,7 @@ class MCPResponseFormatter:
             "format": "error"
         }
     
-    def format_tool_result(self, result: Any, tool_name: str) -> str:
+    def format_tool_result(self, result: Any, tool_name: str) -> Union[str, Dict[str, Any]]:
         """
         Format a tool result for inclusion in a prompt.
         
@@ -381,7 +389,7 @@ class MCPResponseFormatter:
             tool_name: The name of the tool
             
         Returns:
-            Formatted tool result
+            Formatted tool result (string or structured data for tables)
         """
         # Handle different result types
         if isinstance(result, str):
@@ -389,7 +397,11 @@ class MCPResponseFormatter:
         elif isinstance(result, dict):
             # Check if it's a structured query result
             if "data" in result and isinstance(result["data"], list):
-                return f"Result from {tool_name}:\n{self.format_data_adaptively(result['data'], tool_name)}"
+                # Check if this should be a table
+                if self._should_be_table(result["data"], tool_name):
+                    return self._format_as_table_data(result["data"], tool_name)
+                else:
+                    return f"Result from {tool_name}:\n{self.format_data_adaptively(result['data'], tool_name)}"
             else:
                 # Format as JSON for other dicts
                 try:
@@ -398,7 +410,132 @@ class MCPResponseFormatter:
                 except:
                     return f"Result from {tool_name}: {str(result)}"
         elif isinstance(result, list):
-            # Try to format as table or list
-            return f"Result from {tool_name}:\n{self.format_data_adaptively(result, tool_name)}"
+            # Check if this should be a table
+            if self._should_be_table(result, tool_name):
+                return self._format_as_table_data(result, tool_name)
+            else:
+                return f"Result from {tool_name}:\n{self.format_data_adaptively(result, tool_name)}"
         else:
-            return f"Result from {tool_name}: {str(result)}"
+            return f"Result from {tool_name}: {str(result)}"    
+    def _should_be_table(self, data: List[Dict], tool_name: str) -> bool:
+        """
+        Determine if data should be displayed as a table.
+        
+        Args:
+            data: List of data items
+            tool_name: Name of the tool that returned the data
+            
+        Returns:
+            True if data should be displayed as a table
+        """
+        if not data or not isinstance(data, list):
+            return False
+        
+        # Table criteria
+        table_indicators = [
+            len(data) >= 3,  # Multiple items
+            tool_name in ['quick_query', 'query_database'],  # Database queries
+            'scheduled_maintenance' in str(data).lower(),  # Maintenance data
+            any(key in data[0] for key in ['machine_id', 'assignee', 'due_date', 'priority', 'status']) if isinstance(data[0], dict) else False  # Table-like fields
+        ]
+        
+        return any(table_indicators)
+    
+    def _format_as_table_data(self, data: List[Dict], tool_name: str) -> Dict[str, Any]:
+        """
+        Format data as structured table data for frontend rendering.
+        
+        Args:
+            data: List of data items
+            tool_name: Name of the tool that returned the data
+            
+        Returns:
+            Structured table data
+        """
+        if not data:
+            return {"type": "text", "content": "No data found."}
+        
+        # Extract table headers from first item
+        first_item = data[0] if data else {}
+        if not isinstance(first_item, dict):
+            return {"type": "text", "content": self.format_data_adaptively(data, tool_name)}
+        
+        # Define column mappings for better display
+        column_mappings = {
+            'machine_id': 'Machine',
+            'machine_type': 'Type', 
+            'assignee': 'Assigned To',
+            'assigned_mechanic': 'Assigned To',
+            'priority': 'Priority',
+            'due_date': 'Due Date',
+            'status': 'Status',
+            'created_at': 'Created',
+            'description': 'Description',
+            'task_type': 'Task Type'
+        }
+        
+        # Get available columns
+        available_columns = list(first_item.keys())
+        
+        # Order columns logically for maintenance data
+        column_order = ['machine_id', 'machine_type', 'assignee', 'assigned_mechanic', 
+                       'priority', 'status', 'due_date', 'created_at', 'description', 'task_type']
+        
+        # Create ordered column list
+        ordered_columns = []
+        for col in column_order:
+            if col in available_columns:
+                ordered_columns.append(col)
+        
+        # Add any remaining columns
+        for col in available_columns:
+            if col not in ordered_columns:
+                ordered_columns.append(col)
+        
+        # Create headers
+        headers = []
+        for col in ordered_columns:
+            display_name = column_mappings.get(col, col.replace('_', ' ').title())
+            headers.append({
+                'key': col,
+                'label': display_name,
+                'sortable': True
+            })
+        
+        # Process data rows
+        rows = []
+        for item in data:
+            row = {}
+            for col in ordered_columns:
+                value = item.get(col, '')
+                
+                # Format dates nicely
+                if col in ['due_date', 'created_at'] and value:
+                    if isinstance(value, str) and re.match(r'\d{4}-\d{2}-\d{2}', value):
+                        value = date_utils.format_date_for_display(value)
+                
+                # Format machine display
+                if col == 'machine_id' and 'machine_type' in item:
+                    machine_type = item.get('machine_type', '')
+                    if machine_type:
+                        value = f"{machine_type} (#{value})"
+                
+                row[col] = value
+            rows.append(row)
+        
+        return {
+            "type": "table",
+            "headers": headers,
+            "rows": rows,
+            "total_count": len(rows),
+            "title": self._get_table_title(tool_name, len(rows))
+        }
+    
+    def _get_table_title(self, tool_name: str, count: int) -> str:
+        """Generate appropriate title for table display."""
+        if 'maintenance' in tool_name.lower():
+            return f"Scheduled Maintenance Tasks ({count} items)"
+        elif 'mechanic' in tool_name.lower():
+            return f"Mechanics ({count} items)"
+        else:
+            return f"Results ({count} items)"

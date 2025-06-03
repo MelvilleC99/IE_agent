@@ -26,7 +26,8 @@ def scheduled_maintenance_tool(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     mode: str = "interactive",
-    use_database: bool = True
+    use_database: bool = True,
+    force: bool = False
 ) -> str:
     """
     Tool for an agent to interact with the scheduled maintenance workflow.
@@ -37,6 +38,7 @@ def scheduled_maintenance_tool(
         end_date: Optional end date for analysis (YYYY-MM-DD)
         mode: Date selection mode ('interactive' or 'args')
         use_database: Whether to use the database
+        force: Override 30-day clustering frequency limit (default: False)
         
     Returns:
         JSON string with the results
@@ -105,7 +107,8 @@ def scheduled_maintenance_tool(
             logger.info("Running maintenance workflow")
             result = workflow.run(
                 period_start=period_start,
-                period_end=period_end
+                period_end=period_end,
+                force=force
             )
         else:
             logger.error(f"Unknown action: {action}")

@@ -9,15 +9,21 @@ from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from openai.types.chat.chat_completion import ChatCompletion
 
+# Add project root to path
+current_file = os.path.abspath(__file__)
+project_root = os.path.abspath(os.path.join(current_file, "../../../.."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("chatgpt_agent")
 
 # Import utilities
-from MCP.agents.utils.date_utils import date_utils
-from MCP.context_manager import ContextManager
-from MCP.token_tracker import token_tracker
-from MCP.response_formatter import MCPResponseFormatter
+from src.MCP.agents.utils.date_utils import date_utils
+from src.MCP.context_manager import ContextManager
+from src.MCP.token_tracker import token_tracker
+from src.MCP.response_formatter import MCPResponseFormatter
 
 class ChatGPTAgent:
     """
@@ -38,6 +44,9 @@ class ChatGPTAgent:
         self.tool_registry = tool_registry
         self.context_manager = context_manager or ContextManager()
         self.response_formatter = MCPResponseFormatter(tool_registry=tool_registry)
+        
+        # Initialize usage tracker (will be set by orchestrator)
+        self.usage_tracker = None
         
         # Initialize OpenAI client
         api_key = os.getenv("OPENAI_API_KEY")
@@ -60,6 +69,10 @@ class ChatGPTAgent:
         self.system_prompt = self._load_system_prompt()
         
         logger.info(f"ChatGPT Agent initialized with model {self.model} and current date: {self.current_date['formatted_date']}")
+    
+    def set_usage_tracker(self, usage_tracker):
+        """Set the usage tracker for cost tracking."""
+        self.usage_tracker = usage_tracker
     
     def _get_current_date(self) -> Dict[str, str]:
         """Get the current date in multiple formats."""
@@ -138,10 +151,30 @@ For complex analysis, indicate that deeper investigation is needed."""
             }
         })
         
+        # Watchlist details function
+        functions.append({
+            "name": "get_watchlist_details",
+            "description": "Get detailed information about a specific watchlist item when user asks for more details about a previous result",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mechanic_name": {
+                        "type": "string",
+                        "description": "Name of the mechanic (e.g., 'Duncan J')"
+                    },
+                    "issue_type": {
+                        "type": "string",
+                        "description": "Issue type: 'response_time' or 'repair_time'"
+                    }
+                },
+                "required": ["mechanic_name", "issue_type"]
+            }
+        })
+        
         # ScheduledMaintenance function (simplified)
         functions.append({
             "name": "run_scheduled_maintenance",
-            "description": "Run scheduled maintenance workflow",
+            "description": "Run scheduled maintenance workflow with clustering analysis",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -150,7 +183,33 @@ For complex analysis, indicate that deeper investigation is needed."""
                         "enum": ["run", "check", "preview"]
                     },
                     "start_date": {"type": "string"},
-                    "end_date": {"type": "string"}
+                    "end_date": {"type": "string"},
+                    "force": {
+                        "type": "boolean", 
+                        "description": "Override 30-day frequency limit"
+                    }
+                },
+                "required": ["action"]
+            }
+        })
+        
+        # MechanicPerformance function
+        functions.append({
+            "name": "analyze_mechanic_performance",
+            "description": "Analyze mechanic performance including response and repair times",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["analyze", "run"]
+                    },
+                    "start_date": {"type": "string"},
+                    "end_date": {"type": "string"},
+                    "force": {
+                        "type": "boolean",
+                        "description": "Override 30-day frequency limit"
+                    }
                 },
                 "required": ["action"]
             }
@@ -174,13 +233,14 @@ For complex analysis, indicate that deeper investigation is needed."""
         
         return functions
     
-    def process_query(self, query: str, conversation_history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+    def process_query(self, query: str, conversation_history: Optional[List[Dict[str, str]]] = None, conversation_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Process a user query with reduced token usage and better context awareness.
         
         Args:
             query: The user's query
             conversation_history: Optional conversation history
+            conversation_id: Optional conversation ID for tracking
             
         Returns:
             Response dictionary with answer and metadata
@@ -248,6 +308,19 @@ For complex analysis, indicate that deeper investigation is needed."""
             # Track token usage
             token_tracker.track_openai_usage(response)
             
+            # Track API call for cost tracking
+            if conversation_id and self.usage_tracker:
+                try:
+                    self.usage_tracker.track_api_call(
+                        conversation_id=conversation_id,
+                        model=self.model,
+                        input_tokens=(response.usage.prompt_tokens if hasattr(response, 'usage') and response.usage and hasattr(response.usage, 'prompt_tokens') and response.usage.prompt_tokens is not None else 0),
+                        output_tokens=(response.usage.completion_tokens if hasattr(response, 'usage') and response.usage and hasattr(response.usage, 'completion_tokens') and response.usage.completion_tokens is not None else 0),
+                        agent_type="chatgpt"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to track API call: {e}")
+            
             message = response.choices[0].message
             
             # Handle function calls
@@ -256,6 +329,13 @@ For complex analysis, indicate that deeper investigation is needed."""
                 function_args = json.loads(message.function_call.arguments)
                 
                 logger.info(f"Executing function: {function_name} with args: {function_args}")
+                
+                # Track tool usage for cost tracking
+                if conversation_id and self.usage_tracker:
+                    try:
+                        self.usage_tracker.track_tool_usage(conversation_id, function_name)
+                    except Exception as e:
+                        logger.warning(f"Failed to track tool usage: {e}")
                 
                 # Execute the function
                 result = self._execute_function(function_name, function_args)
@@ -274,6 +354,43 @@ For complex analysis, indicate that deeper investigation is needed."""
                 # Format the result using the response formatter
                 formatted_result = self.response_formatter.format_tool_result(result, function_name)
                 
+                # Check if result is structured table data
+                if isinstance(formatted_result, dict) and formatted_result.get("type") == "table":
+                    # Convert table data to markdown for frontend display
+                    table_data = formatted_result
+                    headers = table_data.get("headers", [])
+                    rows = table_data.get("rows", [])
+                    
+                    # Build markdown table
+                    if headers and rows:
+                        # Create header row
+                        header_row = "| " + " | ".join([h.get("label", h.get("key", "")) for h in headers]) + " |"
+                        separator = "|" + "|".join(["---" for _ in headers]) + "|"
+                        
+                        # Create data rows
+                        data_rows = []
+                        for row in rows:
+                            row_values = []
+                            for header in headers:
+                                key = header.get("key", "")
+                                value = str(row.get(key, ""))
+                                row_values.append(value)
+                            data_rows.append("| " + " | ".join(row_values) + " |")
+                        
+                        # Combine into markdown table
+                        markdown_table = "\n".join([header_row, separator] + data_rows)
+                        final_answer = f"Here are the {table_data.get('title', 'results')}:\n\n{markdown_table}"
+                    else:
+                        final_answer = f"Here are the {table_data.get('title', 'results')}, but no data was found."
+                    
+                    return {
+                        "answer": final_answer,
+                        "response": response
+                    }
+                
+                # Handle regular text responses
+                formatted_content = formatted_result if isinstance(formatted_result, str) else str(formatted_result)
+                
                 # Add function result to messages
                 messages.append({
                     "role": "assistant",
@@ -286,7 +403,7 @@ For complex analysis, indicate that deeper investigation is needed."""
                 messages.append({
                     "role": "function",
                     "name": function_name,
-                    "content": formatted_result[:1000]  # Limit function result size
+                    "content": formatted_content[:1000]  # Limit function result size
                 })
                 
                 # Get final response with minimal context
@@ -301,6 +418,19 @@ For complex analysis, indicate that deeper investigation is needed."""
                 # Track token usage
                 token_tracker.track_openai_usage(final_response)
                 
+                # Track final API call for cost tracking
+                if conversation_id and self.usage_tracker:
+                    try:
+                        self.usage_tracker.track_api_call(
+                            conversation_id=conversation_id,
+                            model=self.model,
+                            input_tokens=(final_response.usage.prompt_tokens if hasattr(final_response, 'usage') and final_response.usage and hasattr(final_response.usage, 'prompt_tokens') and final_response.usage.prompt_tokens is not None else 0),
+                            output_tokens=(final_response.usage.completion_tokens if hasattr(final_response, 'usage') and final_response.usage and hasattr(final_response.usage, 'completion_tokens') and final_response.usage.completion_tokens is not None else 0),
+                            agent_type="chatgpt"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to track final API call: {e}")
+                
                 message = final_response.choices[0].message
             
             # Check if DeepSeek is needed
@@ -309,6 +439,15 @@ For complex analysis, indicate that deeper investigation is needed."""
                     "answer": message.content,
                     "requires_deepseek": True,
                     "response": response
+                }
+            
+            # Check if user is saying goodbye (end session trigger)
+            if message.content and self._is_goodbye_message(message.content):
+                final_answer = message.content + "\n\n*Session ended - summary will be created*"
+                return {
+                    "answer": final_answer,
+                    "response": response,
+                    "end_session": True  # Signal to orchestrator to end session
                 }
             
             # Make sure we have a proper response
@@ -404,6 +543,42 @@ For complex analysis, indicate that deeper investigation is needed."""
                 
         return False
     
+    def _is_goodbye_message(self, message: Optional[str]) -> bool:
+        """
+        Check if a message indicates the user wants to end the session.
+        
+        Args:
+            message: Message to check
+            
+        Returns:
+            Boolean indicating if this is a goodbye message
+        """
+        if not message:
+            return False
+        
+        message_lower = message.lower().strip()
+        
+        # Goodbye phrases that should trigger session end
+        goodbye_phrases = [
+            "goodbye", "good bye", "bye", "farewell", "see you later", 
+            "see ya", "talk to you later", "ttyl", "end session",
+            "quit", "exit", "done", "that's all", "thank you goodbye",
+            "thanks bye", "finished", "end chat", "log out", "logout"
+        ]
+        
+        # Check if the message contains any goodbye phrase
+        for phrase in goodbye_phrases:
+            if phrase in message_lower:
+                logger.info(f"Detected goodbye phrase: '{phrase}' in message")
+                return True
+        
+        # Check for simple variations
+        if message_lower in ["bye!", "goodbye!", "done!", "thanks!", "finished!"]:
+            logger.info(f"Detected goodbye message: '{message_lower}'")
+            return True
+            
+        return False
+    
     def _execute_function(self, function_name: str, function_args: Dict[str, Any]) -> Any:
         """
         Execute a function call with better error handling.
@@ -432,6 +607,15 @@ For complex analysis, indicate that deeper investigation is needed."""
                     logger.error("Tool registry not available for quick_query")
                     return {"error": "Tool registry not available"}
                     
+            elif function_name == "get_watchlist_details":
+                if self.tool_registry:
+                    result = self.tool_registry.execute_tool("get_watchlist_details", function_args)
+                    logger.info(f"Watchlist details result: {json.dumps(result)[:200]}...")
+                    return result
+                else:
+                    logger.error("Tool registry not available for get_watchlist_details")
+                    return {"error": "Tool registry not available"}
+                    
             elif function_name == "run_scheduled_maintenance":
                 if self.tool_registry:
                     result = self.tool_registry.execute_tool("run_scheduled_maintenance", function_args)
@@ -439,6 +623,15 @@ For complex analysis, indicate that deeper investigation is needed."""
                     return result
                 else:
                     logger.error("Tool registry not available for run_scheduled_maintenance")
+                    return {"error": "Tool registry not available"}
+                    
+            elif function_name == "analyze_mechanic_performance":
+                if self.tool_registry:
+                    result = self.tool_registry.execute_tool("analyze_mechanic_performance", function_args)
+                    logger.info(f"Mechanic performance result: {json.dumps(result)[:200]}...")
+                    return result
+                else:
+                    logger.error("Tool registry not available for analyze_mechanic_performance")
                     return {"error": "Tool registry not available"}
                     
             elif function_name == "query_database":

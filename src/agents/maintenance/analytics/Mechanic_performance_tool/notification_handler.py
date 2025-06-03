@@ -12,10 +12,12 @@ src_dir = os.path.abspath(os.path.join(current_dir, "../../../"))
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
-# Load environment
-load_dotenv(Path(__file__).resolve().parents[3] / ".env.local")
+# Load environment - fix the path
+project_root = os.path.abspath(os.path.join(current_dir, "../../../../../"))
+env_path = os.path.join(project_root, ".env.local")
+load_dotenv(env_path)
 
-from shared_services.db_client import get_connection
+from shared_services.supabase_client import SupabaseClient
 
 # Set up logging
 logging.basicConfig(
@@ -32,7 +34,7 @@ class NotificationHandler:
     def __init__(self):
         """Initialize the notification handler"""
         try:
-            self.supabase = get_connection()
+            self.supabase = SupabaseClient()
             logger.info("NOTIFICATION: Initialized notification handler")
         except Exception as e:
             logger.error(f"NOTIFICATION: Error connecting to database: {e}")

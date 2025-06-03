@@ -28,6 +28,11 @@ class SupabaseClient:
             logger.error(f"Error initializing Supabase client: {e}")
             raise
 
+    @property
+    def table(self):
+        """Expose the underlying client's table method for complex operations."""
+        return self.client.table
+
     def query_table(
         self,
         table_name: str,
@@ -63,6 +68,16 @@ class SupabaseClient:
                             q = q.gt(col_name, val)
                         elif operator == 'lt':
                             q = q.lt(col_name, val)
+                        elif operator == 'like':
+                            q = q.like(col_name, val)
+                        elif operator == 'ilike':
+                            q = q.ilike(col_name, val)
+                        elif operator == 'eq':
+                            q = q.eq(col_name, val)
+                        elif operator == 'neq':
+                            q = q.neq(col_name, val)
+                        elif operator == 'in':
+                            q = q.in_(col_name, val)
                         else:
                             logger.warning(f"Unsupported operator {operator} for column {col_name}")
                     else:
@@ -87,6 +102,24 @@ class SupabaseClient:
             return response.data[0] if response.data else {}
         except Exception as e:
             logger.error(f"Error inserting into {table_name}: {e}")
+            raise
+
+    def upsert_data(self, table_name: str, data: Dict[str, Any], on_conflict: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Upsert (insert or update) a record into a Supabase table. Only single dict supported."""
+        if not isinstance(table_name, str) or not table_name:
+            raise ValueError("table_name must be a non-empty string")
+        if not isinstance(data, dict):
+            raise ValueError("data must be a dictionary for upsert (Supabase Python client limitation)")
+        try:
+            query = self.client.table(table_name).upsert(data)
+            # The following is commented out because on_conflict may not be supported by the client:
+            # if on_conflict:
+            #     query = query.on_conflict(on_conflict)
+            response = query.execute()
+            logger.info(f"Successfully upserted 1 record into {table_name}")
+            return response.data if response.data else []
+        except Exception as e:
+            logger.error(f"Error upserting into {table_name}: {e}")
             raise
 
     def update_data(self, table_name: str, data: Dict[str, Any], match_column: str) -> Dict[str, Any]:

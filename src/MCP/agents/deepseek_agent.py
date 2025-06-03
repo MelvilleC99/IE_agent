@@ -1,5 +1,14 @@
+import sys
+import os
+
+# Add project root to path
+current_file = os.path.abspath(__file__)
+project_root = os.path.abspath(os.path.join(current_file, "../../../.."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 # Import token tracker from MCP
-from MCP.token_tracker import token_tracker
+from src.MCP.token_tracker import token_tracker
 
 # Import analysis workflows
 from src.agents.maintenance.tools.analysis_workflows import (

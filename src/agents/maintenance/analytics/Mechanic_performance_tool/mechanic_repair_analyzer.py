@@ -1,7 +1,24 @@
+import sys
+import os
 import pandas as pd
 import numpy as np
 from scipy import stats
 from datetime import datetime
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Add project root to path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.abspath(os.path.join(current_dir, "../../../../"))
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+
+# Load environment variables from project root
+project_root = os.path.abspath(os.path.join(current_dir, "../../../../../"))
+env_path = os.path.join(project_root, ".env.local")
+load_dotenv(env_path)
+
+from shared_services.supabase_client import SupabaseClient
 
 # --- Helper functions ---
 def safe_pct(current, best):
@@ -325,40 +342,38 @@ def run_mechanic_analysis(start_date=None, end_date=None) -> dict:
     """
     try:
         # Get database connection
-        from shared_services.db_client import get_connection # type: ignore
-        supabase = get_connection()
+        supabase = SupabaseClient()
         
         if not supabase:
             print("Error: Could not connect to database")
             return {}
             
-        # Build query filters
-        filters = []
+        # Build query filters for SupabaseClient
+        filters = {}
         if start_date:
             if isinstance(start_date, str):
                 start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-            filters.append({"column": "resolved_at", "operator": "gte", "value": start_date.isoformat()})
+            filters['resolved_at.gte'] = start_date.isoformat()
             
         if end_date:
             if isinstance(end_date, str):
                 end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-            filters.append({"column": "resolved_at", "operator": "lte", "value": end_date.isoformat()})
+            filters['resolved_at.lte'] = end_date.isoformat()
         
-        # Query the database
-        query = supabase.table("downtime_detail").select("*")
+        # Query the database using custom SupabaseClient
+        records = supabase.query_table(
+            table_name="downtime_detail",
+            columns="*", 
+            filters=filters,
+            limit=1000
+        )
         
-        # Apply filters if they exist
-        for filter_item in filters:
-            query = query.filter(filter_item["column"], filter_item["operator"], filter_item["value"])
-            
-        records = query.execute()
-        
-        if not records.data:
+        if not records:
             print("No records found in database")
             return {}
             
         # Convert to DataFrame
-        df = pd.DataFrame(records.data)
+        df = pd.DataFrame(records)
         
         # --- Data preparation ---
         conversion_factor = 60  # Convert seconds to minutes

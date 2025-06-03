@@ -1,17 +1,26 @@
 import sys
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+from datetime import datetime
 
 # Add the project root to the Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Load environment variables from project root - fix the path
+env_path = os.path.join(project_root, "../.env.local")
+load_dotenv(env_path)
+
+from shared_services.supabase_client import SupabaseClient
+
 # --- Define your statistical thresholds ---
 Z_SCORE_THRESHOLD = 1.0  # Flag mechanics with Z-score > 1.0 (beyond 1 standard deviation)
 TREND_THRESHOLD_PCT = 5.0  # Flag mechanics with deterioration > 5% per period
 TREND_P_VALUE_THRESHOLD = 0.05  # Only consider statistically significant trends
 
-def interpret_analysis_results(analysis_summary: dict) -> list:
+def interpret_analysis_results(analysis_summary: dict, analysis_records: list = None) -> list:
     """
     Interprets the focused analysis summary using statistical methods,
     identifies actionable findings based on the three main dimensions:
@@ -20,11 +29,43 @@ def interpret_analysis_results(analysis_summary: dict) -> list:
     3. Repair time by machine + reason combination
     4. Trend analysis
     
+    Args:
+        analysis_summary: Results from the analysis
+        analysis_records: Written mechanic performance records with IDs
+    
     Returns a list of findings (not saved to database)
     """
     print("INTERPRETER: Interpreting analysis summary with statistical methods...")
     findings = []
     analysis_type_prefix = "mechanic_repair_time"
+    
+    # Create a lookup for mechanic performance IDs
+    performance_id_lookup = {}
+    if analysis_records:
+        for record in analysis_records:
+            # Create a key based on context, mechanic, and dimensions
+            key = f"{record.get('context', '')}_{record.get('mechanic_name', '')}_{record.get('dimension_1', '')}_{record.get('dimension_2', '')}"
+            performance_id_lookup[key] = record.get('id')
+            # Debug: print each key created
+            if record.get('context') in ['byMachineAndReason', 'trends']:
+                print(f"INTERPRETER: Created lookup key: '{key}' -> ID {record.get('id')}")
+        print(f"INTERPRETER: Created lookup for {len(performance_id_lookup)} performance records")
+    
+    def find_performance_id(context, mechanic_name, dimension_1="", dimension_2=""):
+        """Helper function to find the corresponding mechanic performance ID"""
+        # Convert empty strings to "None" to match the database format
+        d1 = "None" if not dimension_1 else dimension_1
+        d2 = "None" if not dimension_2 else dimension_2
+        
+        key = f"{context}_{mechanic_name}_{d1}_{d2}"
+        performance_id = performance_id_lookup.get(key)
+        if not performance_id:
+            # Debug: print available keys if lookup fails
+            print(f"INTERPRETER: No performance ID found for key '{key}'")
+            print(f"INTERPRETER: Available keys: {list(performance_id_lookup.keys())[:5]}...")  # Show first 5
+        else:
+            print(f"INTERPRETER: Found performance ID {performance_id} for key '{key}'")
+        return performance_id
     
     # Get mechanic info
     mechanic_dict = get_mechanic_info()
@@ -64,10 +105,15 @@ def interpret_analysis_results(analysis_summary: dict) -> list:
                     "percentage_above_mean": round(((response_time - mean_response_time) / mean_response_time) * 100, 1) if mean_response_time and mean_response_time > 0 else None
                 }
                 
+                # Find the corresponding mechanic performance ID (use "overall" context, not "overall_response")
+                performance_id = find_performance_id("overall", mechanic_name)
+                
                 finding = {
                     "analysis_type": f"{analysis_type_prefix}_response_time",
                     "finding_summary": finding_summary,
-                    "finding_details": finding_details
+                    "finding_details": finding_details,
+                    "mechanic_performance_id": performance_id,
+                    "created_at": datetime.now().isoformat()
                 }
                 findings.append(finding)
 
@@ -113,10 +159,15 @@ def interpret_analysis_results(analysis_summary: dict) -> list:
                         "absolute_difference": round(repair_time - mean_repair_time, 1) if mean_repair_time else None
                     }
                     
+                    # Find the corresponding mechanic performance ID (use "byMachineType" context)
+                    performance_id = find_performance_id("byMachineType", mechanic_name, machine_type)
+                    
                     finding = {
                         "analysis_type": f"{analysis_type_prefix}_machine_repair",
                         "finding_summary": finding_summary,
-                        "finding_details": finding_details
+                        "finding_details": finding_details,
+                        "mechanic_performance_id": performance_id,
+                        "created_at": datetime.now().isoformat()
                     }
                     findings.append(finding)
 
@@ -168,10 +219,15 @@ def interpret_analysis_results(analysis_summary: dict) -> list:
                         "absolute_difference": round(repair_time - mean_repair_time, 1) if mean_repair_time else None
                     }
                     
+                    # Find the corresponding mechanic performance ID (use "byMachineAndReason" context)
+                    performance_id = find_performance_id("byMachineAndReason", mechanic_name, machine_type, reason)
+                    
                     finding = {
                         "analysis_type": f"{analysis_type_prefix}_machine_reason_repair",
                         "finding_summary": finding_summary,
-                        "finding_details": finding_details
+                        "finding_details": finding_details,
+                        "mechanic_performance_id": performance_id,
+                        "created_at": datetime.now().isoformat()
                     }
                     findings.append(finding)
 
@@ -209,10 +265,15 @@ def interpret_analysis_results(analysis_summary: dict) -> list:
                         "confidence": "High" if p_value < 0.01 else "Medium" if p_value < 0.05 else "Low"
                     }
                     
+                    # Find the corresponding mechanic performance ID for trends (use "trends" context)
+                    performance_id = find_performance_id("trends", mechanic_id, "repair_time")
+                    
                     finding = {
                         "analysis_type": f"{analysis_type_prefix}_trend_repair",
                         "finding_summary": finding_summary,
-                        "finding_details": finding_details
+                        "finding_details": finding_details,
+                        "mechanic_performance_id": performance_id,
+                        "created_at": datetime.now().isoformat()
                     }
                     findings.append(finding)
         
@@ -248,10 +309,15 @@ def interpret_analysis_results(analysis_summary: dict) -> list:
                         "confidence": "High" if p_value < 0.01 else "Medium" if p_value < 0.05 else "Low"
                     }
                     
+                    # Find the corresponding mechanic performance ID for trends (use "trends" context)
+                    performance_id = find_performance_id("trends", mechanic_id, "response_time")
+                    
                     finding = {
                         "analysis_type": f"{analysis_type_prefix}_trend_response",
                         "finding_summary": finding_summary,
-                        "finding_details": finding_details
+                        "finding_details": finding_details,
+                        "mechanic_performance_id": performance_id,
+                        "created_at": datetime.now().isoformat()
                     }
                     findings.append(finding)
 
@@ -282,8 +348,7 @@ def interpret_analysis_results(analysis_summary: dict) -> list:
 def get_mechanic_info():
     """Get mechanic employee numbers from database"""
     try:
-        from shared_services.db_client import get_connection
-        supabase = get_connection()
+        supabase = SupabaseClient()
         mechanics_result = supabase.table('mechanics').select('employee_number, full_name').execute()
         
         mechanic_dict = {}
@@ -298,9 +363,8 @@ def get_mechanic_info():
 
 # Test function for direct execution
 if __name__ == '__main__':
-    from shared_services.db_client import get_connection
     
-    supabase = get_connection()
+    supabase = SupabaseClient()
     if supabase:
         # Get the most recent analysis results from the database
         analysis_result = supabase.table('mechanic_performance').select('*').order('created_at', desc=True).limit(1).execute()

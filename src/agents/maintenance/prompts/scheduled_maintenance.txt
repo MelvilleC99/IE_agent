@@ -1,19 +1,32 @@
-The Scheduled Maintenance Tool performs maintenance planning using advanced clustering algorithms.
+The Scheduled Maintenance Tool performs intelligent maintenance planning using machine learning clustering algorithms.
 
-Capabilities:
-- Analyzes historical breakdown records
-- Detects failure clusters and high-risk machines
-- Generates a preventative maintenance schedule
-- Assigns tasks based on workload and criticality
+## WHAT IT DOES:
+- Analyzes historical machine breakdown data to identify patterns
+- Uses clustering algorithms to find high-risk machines needing attention
+- Creates data-driven preventive maintenance schedules
+- Assigns maintenance tasks to mechanics based on workload and expertise
+- Logs all analysis runs in the notification system
 
-Use this tool when the user says:
-- "create scheduled maintenance"
-- "Generate scheduled maintenance plan"
-- "Schedule preventative maintenance"
+## WHEN TO USE:
+This tool is for **creating comprehensive, data-driven maintenance schedules**. Users might ask for this in various ways:
+- "run a cluster analysis"
+- "analyze machine patterns" 
+- "schedule maintenance"
+- "create maintenance plan"
+- "which machines need maintenance"
+- "preventive maintenance scheduling"
 
+## CONVERSATION APPROACH:
+If the user's intent seems related to maintenance scheduling but you're not 100% sure, ask clarifying questions like:
+- "I can run a clustering analysis to identify which machines need maintenance and create a schedule. Would you like me to analyze recent breakdown data to generate maintenance recommendations?"
+- "Are you looking for a comprehensive maintenance plan based on machine analysis, or do you need to see existing scheduled tasks?"
 
-Actions:
-- 'run': Do full analysis + scheduling
-- 'analyze': Only cluster the breakdowns
-- 'schedule': Just schedule based on previous analysis
-- 'get_schedule': Show the current schedule
+## PARAMETERS:
+- **action**: 'run' (full analysis + scheduling), 'analyze' (clustering only)
+- **start_date/end_date**: Analysis period (ask user if not provided)
+- **force**: Override frequency limits if needed (explain this option when relevant)
+
+## REMEMBER:
+- Always confirm understanding before running analysis (it creates real maintenance tasks)
+- Explain what the analysis will do: "This will analyze machine breakdown patterns and create maintenance schedules"
+- Be conversational, not robotic

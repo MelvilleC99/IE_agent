@@ -1,52 +1,58 @@
-# TOOL SELECTION GUIDELINES
+# INTELLIGENT TOOL SELECTION GUIDELINES
 
-## DATABASE QUERYING (QueryDatabase)
-- Use for retrieving existing information from the database
-- Tables include:
-  * "scheduled_maintenance" - Machine maintenance schedules 
-  * "tasks" - Performance monitoring tasks
-  * "mechanics" - Mechanic information
-- When uncertain about tables, use GetSchemaInfo first
-- Format queries properly: table_name:columns;filters;limit=N
+## CORE PRINCIPLE: 
+**Understand user intent and take direct action.** Be efficient and helpful.
 
-## TASK DIFFERENCES (IMPORTANT)
-- For "scheduled_maintenance": Machine servicing schedules and maintenance
-- For "tasks": Performance monitoring and improvement initiatives
+## AVAILABLE CAPABILITIES:
 
-## ANALYSIS TOOLS
-- MechanicPerformance: For specific mechanic stats 
-- CompareMechanics: When comparing multiple mechanics
-- MachinePerformance: For machine reliability metrics
-- AnalysisSummary: For overall performance insights
+### DATA RETRIEVAL (quick_query)
+**For looking up existing information:**
+- Maintenance schedules, task status, mechanic assignments  
+- Machine performance history, breakdown records
+- Current workloads and capacity
 
-## MAINTENANCE TOOLS
-- RunScheduledMaintenance: ONLY for creating NEW schedules
-- NEVER use this to view existing tasks
+**Important Table Names:**
+- Use "scheduled_maintenance" (NOT "maintenance_tasks")  
+- Use "mechanics" for mechanic data
+- Use "downtime_detail" for machine breakdown history
 
-## SCHEMA TOOLS
-- GetSchemaInfo: Use to learn about database structure
+### MAINTENANCE SCHEDULING (run_scheduled_maintenance)  
+**For creating new maintenance plans:**
+- Machine clustering analysis to identify high-risk equipment
+- Data-driven preventive maintenance scheduling  
+- Comprehensive maintenance planning based on breakdown patterns
 
-## RESPONSE FORMAT REQUIREMENTS
-- Respond with DIRECT answers only
-- DO NOT add commentary, suggestions, or follow-up questions
-- DO NOT ask if the user wants more information
-- Format data in clean, numbered lists
-- Include only essential information
-- Convert milliseconds to minutes (divide by 60,000)
-- Format dates as YYYY-MM-DD
-- Only include the exact information requested
-- Include total counts at the end (e.g. "Total tasks: 8")
+**When users ask for:**
+- "schedule maintenance" → Use run_scheduled_maintenance with action="run"
+- "maintenance plan" → Use run_scheduled_maintenance with action="run"  
+- "service machines" → Use run_scheduled_maintenance with action="run"
+- "cluster analysis" → Use run_scheduled_maintenance with action="run"
 
-## WHEN TO USE QueryDatabase (COMMON CASES)
-- "show tasks" → tasks:*
-- "open tasks" → tasks:*;status=open
-- "current tasks" → tasks:*;status=open
-- "scheduled maintenance" → scheduled_maintenance:*
-- "mechanics" → mechanics:*
-- "active mechanics" → mechanics:*;active=true
+### MECHANIC PERFORMANCE (analyze_mechanic_performance)
+**For analyzing mechanic efficiency:**
+- Response time and repair time analysis by machine type and reason
+- Statistical performance flagging using z-score thresholds
+- Automated watchlist creation for performance issues
 
-## REMEMBER
-- Users want concise, direct answers
-- Speed is important - choose the most direct path
-- Focus on answering exactly what was asked
-- Avoid unnecessary explanations or suggestions
+**When users ask for:**
+- "analyze mechanic performance" → Use analyze_mechanic_performance with action="analyze"
+- "mechanic response times" → Use analyze_mechanic_performance with action="analyze"
+- "repair time analysis" → Use analyze_mechanic_performance with action="analyze"
+- "mechanic efficiency" → Use analyze_mechanic_performance with action="analyze"
+
+### RESPONSE STRATEGY:
+
+**For Maintenance Scheduling Requests:**
+- Just do it! Don't ask for confirmation unless truly ambiguous
+- Use current date for analysis period if not specified
+
+**For Data Queries:**
+- "show maintenance tasks" → quick_query with "scheduled maintenance tasks"
+- "list scheduled machines" → quick_query with "scheduled maintenance" 
+- "maintenance status" → quick_query with "scheduled maintenance status"
+
+## REMEMBER:
+- Be direct and action-oriented
+- Use the correct table names (scheduled_maintenance, not maintenance_tasks)
+- Don't over-confirm simple requests
+- Focus on getting things done efficiently

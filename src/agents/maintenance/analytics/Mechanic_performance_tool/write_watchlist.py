@@ -13,10 +13,12 @@ src_dir = os.path.abspath(os.path.join(current_dir, "../../../"))
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
-# Load environment
-load_dotenv(Path(__file__).resolve().parents[3] / ".env.local")
+# Load environment - fix the path
+project_root = os.path.abspath(os.path.join(current_dir, "../../../../../"))
+env_path = os.path.join(project_root, ".env.local")
+load_dotenv(env_path)
 
-from shared_services.db_client import get_connection
+from shared_services.supabase_client import SupabaseClient
 
 # Set up logging
 logging.basicConfig(
@@ -33,7 +35,7 @@ class WatchlistWriter:
     def __init__(self):
         """Initialize the watchlist writer"""
         try:
-            self.supabase = get_connection()
+            self.supabase = SupabaseClient()
             logger.info("WATCHLIST_WRITER: Connected to database successfully")
             self.today = datetime.now().date()
         except Exception as e:
@@ -94,14 +96,19 @@ class WatchlistWriter:
             return None
             
         # Extract finding details
-        finding_id = finding.get('finding_id')
         summary = finding.get('finding_summary', '')
         details = finding.get('finding_details', {})
+        mechanic_performance_id = finding.get('mechanic_performance_id')
         
-        # Check if watchlist item already exists for this finding
-        existing_check = self.supabase.table('watch_list').select('id').eq('finding_id', finding_id).execute()
+        # Skip if no mechanic_performance_id (can't link to source data)
+        if not mechanic_performance_id:
+            logger.warning("WATCHLIST_WRITER: Skipping finding - no mechanic_performance_id provided")
+            return None
+        
+        # Check if watchlist item already exists for this mechanic performance record
+        existing_check = self.supabase.table('watch_list').select('id').eq('mechanic_performance_id', mechanic_performance_id).execute()
         if existing_check.data:
-            logger.info(f"WATCHLIST_WRITER: Watchlist item already exists for finding ID {finding_id}")
+            logger.info(f"WATCHLIST_WRITER: Watchlist item already exists for mechanic_performance_id {mechanic_performance_id}")
             return None
         
         # Extract mechanic info from summary
@@ -147,7 +154,7 @@ class WatchlistWriter:
         
         # Create watchlist item record
         watchlist_data = {
-            'finding_id': finding_id,
+            'mechanic_performance_id': mechanic_performance_id,
             'title': title,
             'issue_type': issue_type,
             'entity_type': 'mechanic',
@@ -168,11 +175,11 @@ class WatchlistWriter:
             watchlist_res = self.supabase.table('watch_list').insert(watchlist_data).execute()
             
             if not watchlist_res.data:
-                logger.error(f"WATCHLIST_WRITER: Error creating watchlist item for finding {finding_id}")
+                logger.error(f"WATCHLIST_WRITER: Error creating watchlist item for mechanic_performance_id {mechanic_performance_id}")
                 return None
                 
             watchlist_id = watchlist_res.data[0]['id']
-            logger.info(f"WATCHLIST_WRITER: Created watchlist item ID {watchlist_id} for finding {finding_id}")
+            logger.info(f"WATCHLIST_WRITER: Created watchlist item ID {watchlist_id} for mechanic_performance_id {mechanic_performance_id}")
             
             # Create baseline measurement
             try:
@@ -196,9 +203,6 @@ class WatchlistWriter:
             else:
                 logger.warning(f"WATCHLIST_WRITER: Failed to create baseline measurement for watchlist item {watchlist_id}")
             
-            # Update finding status
-            self.supabase.table('findings_log').update({'status': 'Watchlist_Created'}).eq('finding_id', finding_id).execute()
-            
             # Return the created watchlist item with additional info
             created_item = watchlist_res.data[0]
             created_item.update({
@@ -213,10 +217,13 @@ class WatchlistWriter:
             logger.error(f"WATCHLIST_WRITER: Error creating watchlist item: {e}")
             return None
     
-    def create_watchlist_items_from_findings(self):
+    def create_watchlist_items_from_findings(self, findings=None):
         """
-        Find new findings and create watchlist items for them
+        Create watchlist items from findings - either passed directly or from database
         
+        Args:
+            findings: List of findings to process (optional - if None, reads from database)
+            
         Returns:
             list: Created watchlist item records
         """
@@ -225,21 +232,32 @@ class WatchlistWriter:
             return []
             
         try:
-            # Get new findings
-            findings = self.supabase.table('findings_log').select('*').eq('status', 'New').execute()
-            
-            if not findings.data:
-                logger.info("WATCHLIST_WRITER: No new findings to process")
-                return []
-                
-            logger.info(f"WATCHLIST_WRITER: Found {len(findings.data)} new findings")
+            # Use provided findings or read from database (legacy support)
+            if findings is not None:
+                logger.info(f"WATCHLIST_WRITER: Processing {len(findings)} findings passed directly")
+                logger.info(f"WATCHLIST_WRITER: Sample finding keys: {list(findings[0].keys()) if findings else 'No findings'}")
+                findings_data = findings
+            else:
+                # Legacy mode - read from findings_log table
+                findings_result = self.supabase.table('findings_log').select('*').eq('status', 'New').execute()
+                if not findings_result.data:
+                    logger.info("WATCHLIST_WRITER: No new findings to process")
+                    return []
+                findings_data = findings_result.data
+                logger.info(f"WATCHLIST_WRITER: Found {len(findings_data)} new findings from database")
             
             # Create watchlist items
             created_items = []
-            for finding in findings.data:
+            for i, finding in enumerate(findings_data):
+                logger.info(f"WATCHLIST_WRITER: Processing finding {i+1}/{len(findings_data)}")
+                logger.info(f"WATCHLIST_WRITER: Finding keys: {list(finding.keys())}")
+                logger.info(f"WATCHLIST_WRITER: mechanic_performance_id = {finding.get('mechanic_performance_id')}")
+                
                 item = self.create_watchlist_item_from_finding(finding)
                 if item:
                     created_items.append(item)
+                else:
+                    logger.warning(f"WATCHLIST_WRITER: Failed to create watchlist item for finding {i+1}")
             
             logger.info(f"WATCHLIST_WRITER: Created {len(created_items)} watchlist items")
             return created_items
