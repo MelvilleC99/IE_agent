@@ -48,11 +48,11 @@ class SessionSummarizer:
         logger.info("Session summarizer initialized")
     
     def _init_database_connection(self):
-        """Initialize database connection using existing Supabase setup."""
+        """Initialize database connection using shared Supabase connection."""
         try:
-            from src.shared_services.supabase_client import SupabaseClient
-            self.supabase_client = SupabaseClient()
-            logger.info("Connected to Supabase for session summarization")
+            from src.shared_services.supabase_client import get_shared_supabase_client
+            self.supabase_client = get_shared_supabase_client()
+            logger.info("Connected to shared Supabase connection for session summarization")
         except ImportError:
             logger.warning("Could not connect to Supabase - session summarization will be limited")
             self.supabase_client = None

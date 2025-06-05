@@ -246,12 +246,12 @@ def run_fresh_clustering_analysis(period_start: datetime, period_end: datetime) 
         logger.info("Fetching maintenance data for clustering...")
         
         # Import required modules
-        from shared_services.supabase_client import SupabaseClient
+        from shared_services.supabase_client import get_shared_supabase_client
         from agents.maintenance.workflows.scheduled_maintenance_workflow import transform_records_for_clustering
         from agents.maintenance.analytics.Scheduled_Maintenance.MachineCluster import run_analysis
         
         # Initialize database client
-        db = SupabaseClient()
+        db = get_shared_supabase_client()
         
         # Query database with date filters
         filters = {
@@ -304,9 +304,9 @@ def get_currently_scheduled_machines() -> set:
         Set of machine IDs with open maintenance tasks
     """
     try:
-        from shared_services.supabase_client import SupabaseClient
+        from shared_services.supabase_client import get_shared_supabase_client
         
-        db = SupabaseClient()
+        db = get_shared_supabase_client()
         result = db.query_table(
             table_name='scheduled_maintenance',
             columns='machine_id',
@@ -337,12 +337,12 @@ def create_maintenance_tasks(machines: List[Dict]) -> int:
         logger.info(f"Creating maintenance tasks for {len(machines)} machines...")
         
         # Import task creation infrastructure
-        from shared_services.supabase_client import SupabaseClient
+        from shared_services.supabase_client import get_shared_supabase_client
         from agents.maintenance.analytics.Scheduled_Maintenance.maintenance_task_scheduler import MaintenanceTaskScheduler
         from agents.maintenance.analytics.Scheduled_Maintenance.maintenance_task_writer import MaintenanceTaskWriter
         
         # Initialize components
-        db = SupabaseClient()
+        db = get_shared_supabase_client()
         scheduler = MaintenanceTaskScheduler(db)
         writer = MaintenanceTaskWriter(db)
         

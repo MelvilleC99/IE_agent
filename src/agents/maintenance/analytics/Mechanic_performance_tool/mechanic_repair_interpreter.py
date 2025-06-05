@@ -13,7 +13,7 @@ if project_root not in sys.path:
 env_path = os.path.join(project_root, "../.env.local")
 load_dotenv(env_path)
 
-from shared_services.supabase_client import SupabaseClient
+from shared_services.supabase_client import get_shared_supabase_client
 
 # --- Define your statistical thresholds ---
 Z_SCORE_THRESHOLD = 1.0  # Flag mechanics with Z-score > 1.0 (beyond 1 standard deviation)
@@ -364,7 +364,8 @@ def get_mechanic_info():
 # Test function for direct execution
 if __name__ == '__main__':
     
-    supabase = SupabaseClient()
+    from shared_services.supabase_client import get_shared_supabase_client
+    supabase = get_shared_supabase_client()
     if supabase:
         # Get the most recent analysis results from the database
         analysis_result = supabase.table('mechanic_performance').select('*').order('created_at', desc=True).limit(1).execute()

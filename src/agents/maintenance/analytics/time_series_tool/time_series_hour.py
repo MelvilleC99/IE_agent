@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from typing import Optional
-from shared_services.supabase_client import SupabaseClient
+from shared_services.supabase_client import get_shared_supabase_client
 
 def run_working_hours_analysis(
     work_hours_start: int = 7,
@@ -46,7 +46,7 @@ def run_working_hours_analysis(
         period_info['period_end'] = period_end.isoformat() if isinstance(period_end, datetime) else period_end
     
     # 1. Fetch data with date filtering
-    db = SupabaseClient()
+    db = get_shared_supabase_client()
     
     # Create filters based on date range
     filters = {}

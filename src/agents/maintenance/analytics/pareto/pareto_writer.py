@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from shared_services.supabase_client import SupabaseClient
+from shared_services.supabase_client import get_shared_supabase_client
 
 class ParetoWriter:
     """Handles storing Pareto analysis results to the database"""
@@ -31,8 +31,8 @@ class ParetoWriter:
     def __init__(self, db_client=None):
         """Initialize with database client or create new one"""
         try:
-            self.db_client = db_client if db_client else SupabaseClient()
-            logger.info("ParetoWriter initialized successfully")
+            self.db_client = db_client if db_client else get_shared_supabase_client()
+            logger.info("ParetoWriter initialized with shared connection successfully")
         except Exception as e:
             logger.error(f"Error initializing ParetoWriter: {e}")
             logger.error(traceback.format_exc())

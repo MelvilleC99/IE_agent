@@ -148,7 +148,7 @@ class ContextManager:
         
         return "\n".join(context_parts)
     
-    def add_query_metadata(self, query_type: str, tool_name: str, filters: Dict[str, Any] = None, table_shown: str = None):
+    def add_query_metadata(self, query_type: str, tool_name: str, filters: Optional[Dict[str, Any]] = None, table_shown: Optional[str] = None):
         """
         Add metadata about the last query executed for context-aware follow-ups.
         
@@ -160,10 +160,16 @@ class ContextManager:
         """
         import time
         
+        # Ensure all fields are correct types
+        filters = filters if filters is not None else {}
+        table_shown = table_shown if table_shown is not None else ""
+        query_type = query_type if query_type is not None else ""
+        tool_name = tool_name if tool_name is not None else ""
+        
         self.query_metadata = {
             "last_query_type": query_type,
             "last_tool": tool_name,
-            "last_filters": filters or {},
+            "last_filters": filters,
             "last_table_shown": table_shown,
             "timestamp": time.time()
         }
@@ -200,11 +206,11 @@ class ContextManager:
     def clear_query_metadata(self):
         """Clear the query metadata (useful when starting new conversation topics)."""
         self.query_metadata = {
-            "last_query_type": None,
-            "last_tool": None,
-            "last_filters": {},
-            "last_table_shown": None,
-            "timestamp": None
+            "last_query_type": "",  # Always a string
+            "last_tool": "",        # Always a string
+            "last_filters": {},      # Always a dict
+            "last_table_shown": "",  # Always a string
+            "timestamp": 0.0         # Always a float
         }
         logger.debug("Cleared query metadata")
     

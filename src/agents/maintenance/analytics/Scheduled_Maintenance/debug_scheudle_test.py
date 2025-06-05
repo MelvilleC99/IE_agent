@@ -62,9 +62,9 @@ def debug_machine_clustering():
     print("\n1. Retrieving maintenance records...")
     
     try:
-        from shared_services.supabase_client import SupabaseClient
+        from shared_services.supabase_client import get_shared_supabase_client
         
-        db = SupabaseClient()
+        db = get_shared_supabase_client()
         
         # Use the same date range as your log shows
         start_date = datetime(2024, 11, 1)
@@ -265,9 +265,9 @@ def test_clustering_manually():
     print("\n4. Testing manual clustering approach...")
     
     try:
-        from shared_services.supabase_client import SupabaseClient
+        from shared_services.supabase_client import get_shared_supabase_client
         
-        db = SupabaseClient()
+        db = get_shared_supabase_client()
         
         # Get recent data
         end_date = datetime.now()

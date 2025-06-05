@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from typing import Optional
-from shared_services.supabase_client import SupabaseClient
+from shared_services.supabase_client import get_shared_supabase_client
 
 
 def run_daily_pattern_analysis(
@@ -24,7 +24,7 @@ def run_daily_pattern_analysis(
         period_end: Optional end date for the analysis period
     """
     # 1. Fetch all records with date filtering
-    db = SupabaseClient()
+    db = get_shared_supabase_client()
     
     # Create filters based on date range
     filters = {}

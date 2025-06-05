@@ -41,6 +41,16 @@ class QueryManager:
                 r'(?:what|which|who).*assigned.*(?:maintenance|tasks?)',
                 r'(?:what|which|who).*(?:maintenance|tasks?).*(?:for|assigned)',
                 r'who.*(?:responsible|assigned).*maintenance'
+            ],
+            'time_series': [
+                r'time\s+series',
+                r'(?:daily|hourly)\s+(?:patterns?|trends?|analysis)',
+                r'(?:patterns?|trends?).*(?:daily|hourly|time)',
+                r'(?:show|list|display|view).*(?:time\s+series|patterns?|trends?)',
+                r'(?:wednesday|thursday|monday|tuesday|friday).*(?:slow|issue|problem)',
+                r'(?:hour|morning|afternoon|evening).*(?:slow|issue|problem)',
+                r'(?:what|which).*(?:days?|hours?).*(?:slow|problem|issue)',
+                r'flagged.*(?:patterns?|times?|days?|hours?)'
             ]
         }
         

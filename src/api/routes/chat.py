@@ -298,8 +298,8 @@ def test_session_data(session_id: str):
     """Check if we have usage data for a session."""
     try:
         # Check if there are usage logs for this session
-        from src.agents.maintenance.tools.supabase_tool import get_supabase_client
-        supabase = get_supabase_client()
+        from src.shared_services.supabase_client import get_shared_supabase_client
+        supabase = get_shared_supabase_client()
         
         result = supabase.table("agent_usage_logs").select("*").eq("session_id", session_id).execute()
         

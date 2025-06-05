@@ -38,7 +38,7 @@ try:
     from agents.maintenance.analytics.pareto.pareto_writer import ParetoWriter
     
     # Database client
-    from shared_services.supabase_client import SupabaseClient
+    from shared_services.supabase_client import get_shared_supabase_client
     
     logger.info("Successfully imported all required modules")
 except ImportError as e:
@@ -67,9 +67,9 @@ class ParetoAnalysisWorkflow:
             os.environ["SUPABASE_URL"] = SUPABASE_URL
             os.environ["SUPABASE_KEY"] = SUPABASE_KEY
             
-            self.db = SupabaseClient()
+            self.db = get_shared_supabase_client()
             self.writer = ParetoWriter(self.db)
-            logger.info("ParetoAnalysisWorkflow initialized successfully")
+            logger.info("ParetoAnalysisWorkflow initialized with shared connection successfully")
         except Exception as e:
             logger.error(f"Error initializing ParetoAnalysisWorkflow: {e}")
             logger.error(traceback.format_exc())

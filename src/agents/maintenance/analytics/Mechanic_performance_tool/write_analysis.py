@@ -17,7 +17,7 @@ project_root = os.path.abspath(os.path.join(current_dir, "../../../../../"))
 env_path = os.path.join(project_root, ".env.local")
 load_dotenv(env_path)
 
-from shared_services.supabase_client import SupabaseClient
+from shared_services.supabase_client import get_shared_supabase_client
 
 # Set up logging
 logging.basicConfig(
@@ -34,8 +34,8 @@ class AnalysisWriter:
     def __init__(self):
         """Initialize the analysis writer"""
         try:
-            self.supabase = SupabaseClient()
-            logger.info("WRITER: Connected to database successfully")
+            self.supabase = get_shared_supabase_client()
+            logger.info("WRITER: Connected to shared database connection successfully")
         except Exception as e:
             logger.error(f"WRITER: Error connecting to database: {e}")
             self.supabase = None

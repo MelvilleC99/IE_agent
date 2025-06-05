@@ -19,7 +19,7 @@ logger = logging.getLogger("maintenance_workflow")
 # Import the workflow and date selector
 from ..workflows.scheduled_maintenance_workflow import ScheduledMaintenanceWorkflow
 from ..tools.date_selector import DateSelector
-from shared_services.supabase_client import SupabaseClient
+from shared_services.supabase_client import get_shared_supabase_client
 
 def scheduled_maintenance_tool(
     action: str = "run", 

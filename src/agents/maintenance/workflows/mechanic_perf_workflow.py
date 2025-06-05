@@ -30,7 +30,7 @@ from agents.maintenance.analytics.Mechanic_performance_tool.write_analysis impor
 from agents.maintenance.analytics.Mechanic_performance_tool.write_watchlist import WatchlistWriter
 from agents.maintenance.analytics.Mechanic_performance_tool.notification_handler import NotificationHandler
 from agents.maintenance.tools.date_selector import DateSelector
-from shared_services.supabase_client import SupabaseClient
+from shared_services.supabase_client import get_shared_supabase_client
 
 def run_mechanic_performance_workflow(start_date=None, end_date=None):
     """

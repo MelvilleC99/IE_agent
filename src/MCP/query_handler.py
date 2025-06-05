@@ -11,8 +11,8 @@ project_root = os.path.abspath(os.path.join(current_file, "../../../"))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Import the Supabase client
-from src.shared_services.supabase_client import SupabaseClient
+# Import the shared Supabase client
+from src.shared_services.supabase_client import get_shared_supabase_client
 from src.MCP.agents.utils.date_utils import date_utils
 
 logger = logging.getLogger("query_handler")
@@ -24,10 +24,10 @@ class QueryHandler(ABC):
     """
     
     def __init__(self):
-        """Initialize the query handler with database connection."""
+        """Initialize the query handler with shared database connection."""
         try:
-            self.db_client = SupabaseClient()
-            logger.info(f"{self.__class__.__name__} initialized with database client")
+            self.db_client = get_shared_supabase_client()
+            logger.info(f"{self.__class__.__name__} initialized with shared database client")
         except Exception as e:
             logger.error(f"Error initializing database client: {e}")
             raise

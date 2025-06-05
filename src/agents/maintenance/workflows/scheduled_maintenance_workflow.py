@@ -46,7 +46,7 @@ try:
     from agents.maintenance.utils.machine_candidates_saver import save_machine_candidates
     
     # Database client
-    from shared_services.supabase_client import SupabaseClient
+    from shared_services.supabase_client import get_shared_supabase_client
     
     logger.info("Successfully imported all required modules")
 except ImportError as e:
@@ -130,12 +130,12 @@ class ScheduledMaintenanceWorkflow:
             os.environ["SUPABASE_URL"] = SUPABASE_URL
             os.environ["SUPABASE_KEY"] = SUPABASE_KEY
             
-            self.db = SupabaseClient()
+            self.db = get_shared_supabase_client()
             self.scheduler = MaintenanceTaskScheduler(self.db)
             self.writer = MaintenanceTaskWriter(self.db)
             self.notifier = MaintenanceNotifier()
             self.run_manager = ToolRunManager(self.db)
-            logger.info("ScheduledMaintenanceWorkflow initialized successfully")
+            logger.info("ScheduledMaintenanceWorkflow initialized with shared connection successfully")
         except Exception as e:
             logger.error(f"Error initializing ScheduledMaintenanceWorkflow: {e}")
             logger.error(traceback.format_exc())
@@ -313,6 +313,45 @@ class ScheduledMaintenanceWorkflow:
 
             if not machines_to_service:
                 logger.info("No machines identified for maintenance")
+                result_summary['machines_identified'] = 0
+                result_summary['tasks_created'] = 0
+                result_summary['analysis_success'] = True
+                result_summary['status'] = 'completed'
+                
+                # Still log the analysis run even when no machines identified
+                try:
+                    logger.info("Logging clustering analysis run...")
+                    notification_entry = {
+                        'type': 'clustering_analysis',
+                        'subject': f'Clustering Analysis Completed - {result_summary["machines_identified"]} Machines Identified',
+                        'message': f'Clustering analysis completed successfully. Analyzed {result_summary["records_processed"]} records, identified {result_summary["machines_identified"]} machines for maintenance, created {result_summary["tasks_created"]} tasks.',
+                        'recipient': 'system',
+                        'status': 'sent',
+                        'created_at': datetime.now().isoformat(),
+                        'metadata': {
+                            'tool_run_id': run_id,
+                            'records_processed': result_summary['records_processed'],
+                            'machines_identified': result_summary['machines_identified'],
+                            'tasks_created': result_summary['tasks_created'],
+                            'analysis_period': {
+                                'start': result_summary.get('period_start'),
+                                'end': result_summary.get('period_end')
+                            }
+                        }
+                    }
+                    
+                    log_result = self.db.table('notification_logs').insert(notification_entry).execute()
+                    if log_result and hasattr(log_result, 'data') and log_result.data:
+                        logger.info("Analysis run logged successfully in notification_logs")
+                        result_summary['notification_logged'] = True
+                    else:
+                        logger.warning("Failed to log analysis run in notification_logs")
+                        result_summary['notification_logged'] = False
+                        
+                except Exception as e:
+                    logger.error(f"Error logging analysis run: {e}")
+                    result_summary['notification_logged'] = False
+                
                 return result_summary
             
             logger.info(f"Identified {len(machines_to_service)} machines for maintenance")
@@ -378,8 +417,9 @@ class ScheduledMaintenanceWorkflow:
             # --- Step 8: Complete tool run logging ---
             try:
                 # Calculate summary data
-                cluster_0_count = len([m for m in aggregated_data if m.get('cluster') == 0]) if aggregated_data else 0
-                cluster_1_count = len([m for m in aggregated_data if m.get('cluster') == 1]) if aggregated_data else 0
+                filtered_aggregated_data = [m for m in aggregated_data if isinstance(m, dict)] if aggregated_data else []
+                cluster_0_count = len([m for m in filtered_aggregated_data if m.get('cluster') == 0])
+                cluster_1_count = len([m for m in filtered_aggregated_data if m.get('cluster') == 1])
                 
                 summary = f"Clustering analysis identified {result_summary['machines_identified']} machines for maintenance, created {result_summary['tasks_created']} tasks"
                 

@@ -156,3 +156,39 @@ class SupabaseClient:
         except Exception as e:
             logger.error(f"Error retrieving schema info: {e}")
             raise
+
+
+# =============================================================================
+# SHARED CONNECTION MANAGEMENT
+# =============================================================================
+
+# Shared instance for connection reuse across the application
+_shared_instance = None
+
+def get_shared_supabase_client():
+    """
+    Get a shared SupabaseClient instance.
+    
+    Creates the connection only once and reuses it across all parts of the application.
+    This reduces connection overhead and improves performance.
+    
+    Returns:
+        SupabaseClient: The shared database client instance
+    """
+    global _shared_instance
+    if _shared_instance is None:
+        logger.info("Creating shared Supabase connection...")
+        _shared_instance = SupabaseClient()
+        logger.info("✅ Shared Supabase connection established")
+    return _shared_instance
+
+def reset_shared_connection():
+    """
+    Reset the shared connection (useful for testing or reconnection).
+    
+    This will force the creation of a new connection the next time
+    get_shared_supabase_client() is called.
+    """
+    global _shared_instance
+    _shared_instance = None
+    logger.info("Shared Supabase connection reset")

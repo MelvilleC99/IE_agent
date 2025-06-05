@@ -192,8 +192,8 @@ def get_machines_with_open_tasks() -> set:
     Get set of machine IDs that already have open maintenance tasks.
     """
     try:
-        from shared_services.supabase_client import SupabaseClient
-        db = SupabaseClient()
+        from shared_services.supabase_client import get_shared_supabase_client
+        db = get_shared_supabase_client()
         result = db.query_table(
             table_name='scheduled_maintenance',
             columns='machine_id',

@@ -52,8 +52,9 @@ def mechanic_performance_tool(
     try:
         logger.info(f"Mechanic performance tool called with action: {action}")
         
-        # Initialize database and run manager
-        db = SupabaseClient()
+        # Initialize database and run manager using shared connection
+        from shared_services.supabase_client import get_shared_supabase_client
+        db = get_shared_supabase_client()
         run_manager = ToolRunManager(db)
         
         # Validate action

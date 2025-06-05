@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import re
 import sys
 import os
@@ -107,58 +107,78 @@ class WatchlistQueryTool(QueryHandler):
         
         return formatted_data
     
-    def get_item_details(self, item_id: int = None, mechanic_name: str = None, issue_type: str = None) -> Dict[str, Any]:
-        """Get detailed information about a specific watchlist item."""
+    def get_item_details(self, item_id: Optional[str] = None, mechanic_name: Optional[str] = None, issue_type: Optional[str] = None) -> Dict[str, Any]:
+        """Get detailed information about watchlist items."""
         filters = {"status": "open"}
         
         if item_id:
-            filters["id"] = item_id
-        elif mechanic_name and issue_type:
+            filters["id"] = str(item_id)
+        elif mechanic_name:
+            # If only mechanic name provided, show details for ALL their items
             filters["mechanic_name.ilike"] = f"%{mechanic_name}%"
-            filters["issue_type"] = issue_type
+            if issue_type:
+                # If issue type also provided, filter to specific type
+                filters["issue_type"] = issue_type
         else:
-            return {"error": "Must provide either item_id or mechanic_name + issue_type"}
+            return {"error": "Must provide either item_id or mechanic_name"}
         
         try:
             data = self.db_client.query_table(
                 table_name="watch_list",
                 columns="*",
                 filters=filters,
-                limit=1
+                limit=10  # Increased limit for showing multiple items
             )
             
             if not data:
-                return {"error": "No matching watchlist item found"}
+                return {"error": "No matching watchlist items found"}
             
-            item = data[0]
-            notes = item.get("notes", "")
-            
-            # Extract detailed performance information
-            performance_detail = self._extract_detailed_performance(notes)
-            
-            return {
-                "title": item.get("title", ""),
-                "mechanic": f"{item.get('mechanic_name', '')} (#{item.get('mechanic_id', '')})",
-                "issue_type": item.get("issue_type", "").replace("_", " ").title(),
-                "status": item.get("status", ""),
-                "monitor_period": f"{item.get('monitor_start_date', '')} to {item.get('monitor_end_date', '')}",
-                "performance_details": performance_detail,
-                "recommendation": item.get("recommendation", "No recommendation yet")
-            }
-            
+            # Handle multiple items (when showing all for a mechanic)
+            if len(data) > 1:
+                results = []
+                for item in data:
+                    item_detail = self._format_single_item_detail(item)
+                    results.append(item_detail)
+                
+                return {
+                    "multiple_items": True,
+                    "mechanic": data[0].get("mechanic_name", ""),
+                    "total_items": len(data),
+                    "items": results
+                }
+            else:
+                # Single item detail
+                item = data[0]
+                return self._format_single_item_detail(item)
+                
         except Exception as e:
             return {"error": str(e)}
+    
+    def _format_single_item_detail(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        """Format a single item's details."""
+        notes = item.get("notes", "")
+        performance_detail = self._extract_detailed_performance(notes)
+        
+        return {
+            "title": item.get("title", ""),
+            "mechanic": f"{item.get('mechanic_name', '')} (#{item.get('mechanic_id', '')})",
+            "issue_type": item.get("issue_type", "").replace("_", " ").title(),
+            "status": item.get("status", ""),
+            "monitor_period": f"{item.get('monitor_start_date', '')} to {item.get('monitor_end_date', '')}",
+            "performance_details": performance_detail,
+            "recommendation": item.get("recommendation", "No recommendation yet")
+        }
     
     def _extract_detailed_performance(self, notes: str) -> str:
         """Extract detailed performance information from notes."""
         if not notes:
             return "No performance details available"
         
-        # Look for specific patterns in the notes
+        # Updated patterns to handle spaced numbers like "12. 2 min"
         patterns = [
-            r'average\s+(response|repair)\s+time\s+is\s+([\d.]+)\s*min.*?team\s+average\s+of\s+([\d.]+)\s*min',
+            r'average\s+(response|repair)\s+time\s+is\s+([\d.\s]+)\s*min.*?team\s+average\s+of\s+([\d.\s]+)\s*min',
             r'Z-score:\s*([\d.-]+)',
-            r'([\d.]+)\s*standard\s+deviations?\s+(above|below)\s+mean'
+            r'([\d.\s]+)\s*standard\s+deviations?\s+(above|below)\s+(?:team\s+)?mean'
         ]
         
         details = []
@@ -168,14 +188,14 @@ class WatchlistQueryTool(QueryHandler):
             if match:
                 if 'average' in pattern:
                     metric_type = match.group(1)
-                    individual = match.group(2)
-                    team_avg = match.group(3)
+                    individual = match.group(2).replace(" ", "")  # Remove spaces from numbers
+                    team_avg = match.group(3).replace(" ", "")    # Remove spaces from numbers
                     details.append(f"{metric_type.title()} time: {individual} min (team average: {team_avg} min)")
                 elif 'Z-score' in pattern:
-                    z_score = match.group(1)
+                    z_score = match.group(1).replace(" ", "")  # Remove spaces from Z-score
                     details.append(f"Z-score: {z_score}")
                 elif 'standard' in pattern:
-                    std_dev = match.group(1)
+                    std_dev = match.group(1).replace(" ", "")  # Remove spaces from std dev
                     direction = match.group(2)
                     details.append(f"{std_dev} standard deviations {direction} team mean")
         

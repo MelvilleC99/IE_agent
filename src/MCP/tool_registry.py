@@ -19,6 +19,13 @@ if TYPE_CHECKING:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("mcp_tool_registry")
 
+# Import tool discovery
+try:
+    from src.MCP.tool_discovery import ToolDiscovery
+except ImportError:
+    logger.warning("ToolDiscovery not available for auto-discovery")
+    ToolDiscovery = None
+
 class MCPToolRegistry:
     """
     Registry for tools used in the Model Context Protocol (MCP).
@@ -297,6 +304,30 @@ class MCPToolRegistry:
                 descriptions.append("")
         
         return "\n".join(descriptions)
+    
+    def auto_discover_tools(self, directory: str, category: str = "maintenance") -> int:
+        """
+        Auto-discover and register tools from a directory.
+        
+        Args:
+            directory: Path to scan for tools
+            category: Category to assign to discovered tools
+            
+        Returns:
+            Number of tools discovered and registered
+        """
+        if not ToolDiscovery:
+            logger.warning("ToolDiscovery not available, skipping auto-discovery")
+            return 0
+            
+        try:
+            discovery = ToolDiscovery(tool_registry=self)
+            tools_found = discovery.discover_tools_in_directory(directory, category)
+            logger.info(f"Auto-discovered {tools_found} tools from {directory}")
+            return tools_found
+        except Exception as e:
+            logger.error(f"Error in auto-discovery: {e}")
+            return 0
 
 
 # Initialize the tool registry
@@ -361,6 +392,7 @@ def register_maintenance_tools():
     """Register maintenance tools with the registry."""
     from src.agents.maintenance.tools.scheduled_maintenance_tool import scheduled_maintenance_tool
     from src.agents.maintenance.tools.mechanic_performance_tool import mechanic_performance_tool
+    from src.agents.maintenance.tools.time_series_tool import time_series_analysis_tool
     
     # Register the scheduled maintenance tool
     tool_registry.register_tool(
@@ -436,6 +468,41 @@ def register_maintenance_tools():
             }
         }
     )
+    
+    # Register the time series analysis tool
+    tool_registry.register_tool(
+        name="analyze_time_series_patterns",
+        function=time_series_analysis_tool,
+        description="Analyze daily and hourly patterns in maintenance data to identify trends and problematic time periods.",
+        category="maintenance",
+        parameters={
+            "analysis_type": {
+                "type": "string",
+                "description": "Type of analysis to run ('daily', 'hourly', or 'both')",
+                "required": False
+            },
+            "start_date": {
+                "type": "string",
+                "description": "Start date for analysis (YYYY-MM-DD)",
+                "required": False
+            },
+            "end_date": {
+                "type": "string", 
+                "description": "End date for analysis (YYYY-MM-DD)",
+                "required": False
+            },
+            "mode": {
+                "type": "string",
+                "description": "Date selection mode ('args' or 'interactive')",
+                "required": False
+            },
+            "force": {
+                "type": "boolean",
+                "description": "Override 30-day frequency limit",
+                "required": False
+            }
+        }
+    )
 
 # Register query tools
 def register_query_tools():
@@ -443,6 +510,7 @@ def register_query_tools():
     from src.MCP.query_manager import QueryManager
     from src.agents.maintenance.tools.query_tools.watchlist_query import WatchlistQueryTool
     from src.agents.maintenance.tools.query_tools.scheduled_maintenance_query import ScheduledMaintenanceQueryTool
+    from src.agents.maintenance.tools.query_tools.time_series_query import TimeSeriesQueryTool
     
     # Create query manager instance
     query_manager = QueryManager()
@@ -450,12 +518,13 @@ def register_query_tools():
     # Register individual query tools with the manager
     query_manager.register_query_tool("watchlist", WatchlistQueryTool())
     query_manager.register_query_tool("scheduled_maintenance", ScheduledMaintenanceQueryTool())
+    query_manager.register_query_tool("time_series", TimeSeriesQueryTool())
     
     # Register the query manager as a single tool
     tool_registry.register_tool(
         name="quick_query",
         function=query_manager.execute_query,
-        description="Execute quick database queries for maintenance data (maintenance tasks, watchlist items, performance data). Handles filtering by mechanic, date, status, machine, etc.",
+        description="Execute quick database queries for maintenance data (maintenance tasks, watchlist items, time series patterns, performance data). Handles filtering by mechanic, date, status, machine, etc.",
         category="data_retrieval",
         parameters={
             "query": {
@@ -523,12 +592,12 @@ def register_minimal_quick_query():
         tool_registry.register_tool(
             name="get_watchlist_details",
             function=watchlist_tool.get_item_details,
-            description="Get detailed information about a specific watchlist item, including performance metrics and recommendations.",
+            description="Get detailed information about watchlist items, including performance metrics and recommendations. Provide mechanic_name to see all items for that person, or add issue_type to filter to specific issues.",
             category="data_retrieval",
             parameters={
                 "mechanic_name": {
                     "type": "string",
-                    "description": "Name of the mechanic (required if item_id not provided)",
+                    "description": "Name of the mechanic to get details for",
                     "required": False
                 },
                 "issue_type": {
@@ -581,6 +650,13 @@ try:
 except Exception as e:
     logger.error(f"Failed to register maintenance tools: {e}")
 
+# Register query tools
+try:
+    register_query_tools_if_needed()
+    logger.info("Query tools registration completed")
+except Exception as e:
+    logger.error(f"Failed to register query tools: {e}")
+
 # Ensure get_watchlist_details is always available
 try:
     if "get_watchlist_details" not in tool_registry.get_tool_names():
@@ -590,12 +666,12 @@ try:
         tool_registry.register_tool(
             name="get_watchlist_details",
             function=watchlist_tool.get_item_details,
-            description="Get detailed information about a specific watchlist item, including performance metrics and recommendations.",
+            description="Get detailed information about watchlist items, including performance metrics and recommendations. Provide mechanic_name to see all items for that person, or add issue_type to filter to specific issues.",
             category="data_retrieval",
             parameters={
                 "mechanic_name": {
                     "type": "string",
-                    "description": "Name of the mechanic (required if item_id not provided)",
+                    "description": "Name of the mechanic to get details for",
                     "required": False
                 },
                 "issue_type": {

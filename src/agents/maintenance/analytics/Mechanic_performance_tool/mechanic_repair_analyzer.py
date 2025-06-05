@@ -18,7 +18,7 @@ project_root = os.path.abspath(os.path.join(current_dir, "../../../../../"))
 env_path = os.path.join(project_root, ".env.local")
 load_dotenv(env_path)
 
-from shared_services.supabase_client import SupabaseClient
+from shared_services.supabase_client import get_shared_supabase_client
 
 # --- Helper functions ---
 def safe_pct(current, best):
@@ -341,8 +341,9 @@ def run_mechanic_analysis(start_date=None, end_date=None) -> dict:
         dict: Analysis results
     """
     try:
-        # Get database connection
-        supabase = SupabaseClient()
+        # Get shared database connection
+        from shared_services.supabase_client import get_shared_supabase_client
+        supabase = get_shared_supabase_client()
         
         if not supabase:
             print("Error: Could not connect to database")

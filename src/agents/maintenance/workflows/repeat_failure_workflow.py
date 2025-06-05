@@ -96,9 +96,9 @@ class RepeatFailureWorkflow:
             
             # --- Step 1: Fetch maintenance data ---
             logger.info("Fetching maintenance data...")
-            from shared_services.supabase_client import SupabaseClient
+            from shared_services.supabase_client import get_shared_supabase_client
             
-            db = SupabaseClient()
+            db = get_shared_supabase_client()
             
             # Create filters based on date range
             filters = {}
